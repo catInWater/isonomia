@@ -2,39 +2,77 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
 
 permissions:
-  actions: read
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NX_DAEMON: 'false'
+  NX_NO_CLOUD: 'true'
+  NX_INTERACTIVE: 'false'
+
 jobs:
-  main:
-    runs-on: ubuntu-latest
+  checks:
+    name: Linux checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
-          filter: tree:0
           fetch-depth: 0
-
-      # This enables task distribution via Nx Cloud
-      # Run this command as early as possible, before dependencies are installed
-      # Learn more at https://nx.dev/docs/reference/nx-cloud-cli#npx-nxcloud-startcirun
-      - run: npx nx start-ci-run --distribute-on="3 linux-medium-js" --stop-agents-after="e2e"
-
-      # Cache node_modules
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
-          cache: 'npm'
-
+          node-version-file: .node-version
+          cache: npm
+      - name: Pin package manager
+        run: npm install --global npm@11.19.0
       - run: npm ci
-
-      # Prepend any command with "nx record --" to record its logs to Nx Cloud
-      - run: npx nx record -- npx nx format:check --base="remotes/origin/main"
-      - run: npx nx run-many -t lint test build typecheck e2e
-      # Nx Cloud recommends fixes for failures to help you get CI green faster. Learn more: https://nx.dev/docs/features/ci-features/self-healing-ci
-      - run: npx nx fix-ci
+      - name: Lint and typecheck
+        run: npm exec -- nx run-many -t lint typecheck -p reader reader-ui
+      - name: Tests including deterministic fixture verification
+        run: npm exec -- nx run reader:test
+      - name: Validate specification references
+        run: npm exec -- nx run reader:spec-check
+      - name: Format tracked source and specifications
+        env:
+          NX_FORMAT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm exec -- nx format:check --base="$NX_FORMAT_BASE"
+      - name: Production build
+        run: npm exec -- nx build reader
+      - name: Dependency audit (report only; release gate tracked separately)
         if: always()
+        continue-on-error: true
+        run: npm audit
+
+  windows-installer:
+    name: Windows installer
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Pin package manager
+        run: npm install --global npm@11.19.0
+      - run: npm ci
+      - name: Verify fixtures and run unit tests on Windows
+        run: npm exec -- nx run reader:test
+      - name: Build Windows installer without publishing
+        run: npm exec -- nx run reader:make
+      - name: Retain unsigned installer for manual smoke testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: reader-windows-x64-unsigned
+          path: dist/executables/**/*.exe
+          if-no-files-found: error
+          retention-days: 14

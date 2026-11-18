@@ -29,6 +29,14 @@ export default class Main {
 // handle setup events as quickly as possible
 Main.initialize();
 
-// bootstrap app
-Main.bootstrapApp();
-Main.bootstrapAppEvents();
+// A single process owns the data directory and its revision queue.
+if (app.requestSingleInstanceLock()) {
+  Main.bootstrapApp();
+  Main.bootstrapAppEvents();
+  app.on('second-instance', () => {
+    if (App.mainWindow?.isMinimized()) App.mainWindow.restore();
+    App.mainWindow?.focus();
+  });
+} else {
+  app.quit();
+}

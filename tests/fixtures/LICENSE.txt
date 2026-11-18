@@ -1,0 +1,15 @@
+SPDX-License-Identifier: CC0-1.0
+
+All original synthetic text and generated fixture containers in this directory
+are dedicated to the public domain under CC0 1.0 Universal.
+To the extent permitted by law, the Reader fixture contributors waive all
+copyright and related or neighboring rights to these synthetic fixtures.
+The fixtures are provided without warranty.
+Legal text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+No third-party books, quotations, personal information, fonts, images or other
+restricted resources are included. Names, sentences and repeated long-book
+content are invented solely for testing. Generation requires no network.
+manifest.json records provenance, purpose, byte sizes and SHA-256 checksums.
+missing-toc.epub, malformed.epub and malformed-utf8.txt are intentionally
+nonconforming negative cases; they must not be described as valid books.
