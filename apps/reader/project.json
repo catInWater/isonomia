@@ -75,14 +75,25 @@
     },
     "test": {
       "executor": "nx:run-commands",
-      "options": { "command": "node --test tests/*/*.test.cjs && node tools/fixtures.cjs --check" },
-      "inputs": ["default", "{workspaceRoot}/tests/**/*", "{workspaceRoot}/tools/**/*"],
+      "options": {
+        "command": "node --test tests/*/*.test.cjs && node tools/fixtures.cjs --check"
+      },
+      "inputs": [
+        "default",
+        "{workspaceRoot}/tests/**/*",
+        "{workspaceRoot}/tools/**/*"
+      ],
       "cache": true
     },
     "spec-check": {
       "executor": "nx:run-commands",
       "options": { "command": "node tools/validate-specs.cjs" },
-      "inputs": ["default", "{workspaceRoot}/tools/validate-specs.cjs", "{workspaceRoot}/.claude/docs/**/*.md", "{workspaceRoot}/README.md"],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/tools/validate-specs.cjs",
+        "{workspaceRoot}/.claude/docs/**/*.md",
+        "{workspaceRoot}/README.md"
+      ],
       "cache": true
     }
   }

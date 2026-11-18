@@ -68,7 +68,11 @@ export default class App {
         root,
         schemaVersion: 1,
         schemas: {
-          1: (data: Json) => validJson(data) && typeof data === 'object' && data !== null && !Array.isArray(data),
+          1: (data: Json) =>
+            validJson(data) &&
+            typeof data === 'object' &&
+            data !== null &&
+            !Array.isArray(data),
         },
       });
       App.storageAvailable = true;
@@ -92,7 +96,9 @@ export default class App {
       },
     });
     const contents = App.mainWindow.webContents;
-    contents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    contents.session.setPermissionRequestHandler(
+      (_contents, _permission, callback) => callback(false),
+    );
     contents.session.setPermissionCheckHandler(() => false);
     contents.session.webRequest.onBeforeRequest((details, callback) => {
       callback({ cancel: !allowRequest(details.url, App.documentUrl) });

@@ -1,29 +1,17 @@
-export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export interface RecordValue<T extends Json = Json> {
-  id: string;
-  revision: number;
-  schemaVersion: number;
-  data: T;
-}
-export interface RecoveryCandidate {
-  name: string;
-  valid: boolean;
-  revision?: number;
-  schemaVersion?: number;
-  checksum?: string;
-  error?: string;
-}
-export interface RecoverySelection {
-  name: string;
-  checksum: string;
-  expectedRevision: number;
-}
-export interface RecoveryStatus {
-  available: boolean;
-  message: string;
-  recovery: RecoveryCandidate[];
-  expectedRevision: number;
-}
+import type {
+  Json,
+  RecordValue,
+  RecoveryCandidate,
+  RecoverySelection,
+} from '@reader/storage-bridge';
+export type {
+  Json,
+  RecordValue,
+  RecoveryCandidate,
+  RecoverySelection,
+  RecoveryStatus,
+} from '@reader/storage-bridge';
+
 export class StorageError extends Error {
   code: string;
   details: { [key: string]: unknown };
@@ -39,8 +27,13 @@ export class DurableStore {
     root: string;
     schemaVersion: number;
     schemas: { [version: number]: (data: Json) => boolean };
-    migrations?: { [sourceVersion: number]: (data: Json) => Json | Promise<Json> };
-    checkpoint?: (stage: string, details: { [key: string]: unknown }) => Promise<void>;
+    migrations?: {
+      [sourceVersion: number]: (data: Json) => Json | Promise<Json>;
+    };
+    checkpoint?: (
+      stage: string,
+      details: { [key: string]: unknown },
+    ) => Promise<void>;
   });
   load(id: string): Promise<RecordValue | null>;
   save(id: string, data: Json, expectedRevision: number): Promise<RecordValue>;
