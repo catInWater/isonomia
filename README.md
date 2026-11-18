@@ -1,110 +1,90 @@
-# New Nx Repository
+# Reader
 
-<a alt="Nx logo" href="https://nx.dev" target="_blank" rel="noreferrer"><img src="https://raw.githubusercontent.com/nrwl/nx/master/images/nx-logo.png" width="45"></a>
+Nx monorepo with a React renderer (`apps/reader-ui`) and an Electron shell
+(`apps/reader`, generated with `nx-electron`).
 
-✨ Your new, shiny [Nx workspace](https://nx.dev) is ready ✨.
+## Requirements
 
-[Learn more about this workspace setup and its capabilities](https://nx.dev/docs/technologies/typescript/introduction?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or run `npx nx graph` to visually explore what was created. Now, let's get you up to speed!
-## Finish your Nx platform setup
-
-🚀 [Finish setting up your workspace](https://cloud.nx.app/connect/5IntQFBNKX) to get faster builds with remote caching, distributed task execution, and self-healing CI. [Learn more about Nx Cloud](https://nx.dev/ci/intro/why-nx-cloud).
-
-## Generate a library
-
-```sh
-npx nx g @nx/js:lib packages/pkg1 --publishable --importPath=@my-org/pkg1
-```
-
-## Run tasks
-
-To build the library use:
+- Node.js 24 and npm 11 (workspace package manager: npm 11.19.0).
+- A desktop session to open Electron. Headless Linux requires Xvfb and Chromium's
+  system libraries.
+- Network access to npm and Electron's binary downloads during installation.
 
 ```sh
-npx nx run pkg1:build
+npm install
 ```
 
-To run any task with Nx use:
+If your network uses `HTTP_PROXY`/`HTTPS_PROXY`, enable the Electron downloader's
+proxy support with `ELECTRON_GET_USE_PROXY=1 npm install`.
+
+Nx and all `@nx/*` plugins are aligned to **22.0.0**, with `nx-electron` 22.0.0
+and TypeScript 5.9.3. The workspace originally used Nx 24; it was downgraded
+because `nx-electron` 22 requires Nx 22. The generator selects Electron 34.x;
+review and upgrade that runtime before distributing the application.
+
+## Development
+
+Start the renderer and Electron together:
 
 ```sh
-npx nx run <project-name>:<target>
+npm exec -- nx serve reader
 ```
 
-These targets are either [inferred automatically](https://nx.dev/docs/concepts/inferred-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or defined in the `project.json` or `package.json` files.
+The Electron executor starts `reader-ui:serve` and waits for its first successful
+build, then launches the shell. The UI target sets `NX_BUILD_TARGET` explicitly
+because the plugin's nested executor otherwise inherits the shell's project;
+the readiness check matches the `successfully` token in Webpack's build output. No second terminal is needed. Changes to the UI
+reload through Webpack; changes to the main process trigger an Electron restart.
 
-[More about running tasks in the docs &raquo;](https://nx.dev/docs/features/run-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Versioning and releasing
-
-To version and release the library use
-
-```
-npx nx release
-```
-
-Pass `--dry-run` to see what would happen without actually releasing the library.
-
-[Learn more about Nx release &raquo;](https://nx.dev/docs/features/manage-releases?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Keep TypeScript project references up to date
-
-Nx automatically updates TypeScript [project references](https://www.typescriptlang.org/docs/handbook/project-references.html) in `tsconfig.json` files to ensure they remain accurate based on your project dependencies (`import` or `require` statements). This sync is automatically done when running tasks such as `build` or `typecheck`, which require updated references to function correctly.
-
-To manually trigger the process to sync the project graph dependencies information to the TypeScript project references, run the following command:
+To run only the web UI at http://localhost:4200:
 
 ```sh
-npx nx sync
+npm exec -- nx serve reader-ui
 ```
 
-You can enforce that the TypeScript project references are always in the correct state when running in CI by adding a step to your CI job configuration that runs the following command:
+The skeleton has Library (`#/`) and About (`#/about`) routes. Navigation and
+refresh use `HashRouter`, so they also work from a local file URL.
+
+## Build and check
 
 ```sh
-npx nx sync:check
+# Production UI + main process + preload
+npm exec -- nx build reader
+
+# Static checks for both projects
+npm exec -- nx run-many -t lint typecheck -p reader-ui reader
+
+# Verify TypeScript project references
+npm exec -- nx sync:check
 ```
 
-[Learn more about nx sync](https://nx.dev/reference/nx-commands#sync)
+Renderer output: `dist/apps/reader-ui`. Electron output: `dist/apps/reader`.
+The shell uses localhost in development and the sibling renderer directory for
+production/file loading. `contextIsolation` is enabled and `nodeIntegration` is
+disabled; the preload exposes only platform and application-version access.
 
-## Nx Cloud
+There is no unit-test target in this minimal skeleton.
 
-Nx Cloud ensures a [fast and scalable CI](https://nx.dev/nx-cloud?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) pipeline. It includes features such as:
-
-- [Remote caching](https://nx.dev/docs/features/ci-features/remote-cache?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task distribution across multiple machines](https://nx.dev/docs/features/ci-features/distribute-task-execution?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Automated e2e test splitting](https://nx.dev/docs/features/ci-features/split-e2e-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task flakiness detection and rerunning](https://nx.dev/docs/features/ci-features/flaky-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-### Set up CI (non-Github Actions CI)
-
-**Note:** This is only required if your CI provider is not GitHub Actions.
-
-Use the following command to configure a CI workflow for your workspace:
+## Packaging
 
 ```sh
-npx nx g ci-workflow
+# Unpacked application for the current platform
+npm exec -- nx run reader:package
+
+# Platform installer/artifact
+npm exec -- nx run reader:make
 ```
 
-[Learn more about Nx on CI](https://nx.dev/docs/features/ci-features?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+Both targets first build the production shell and UI. Outputs go to
+`dist/packages` and `dist/executables`, respectively. Publishing is disabled.
+Platform signing, icons, update service and release metadata still need to be
+configured before distribution. Packaging options live in
+`apps/reader/src/app/options/maker.options.json`.
 
-## Install Nx Console
+The HTML declares `<base href="./">`, and Webpack uses `publicPath: './'`.
+`NxAppWebpackPlugin.baseHref` is disabled because Nx 22 incorrectly rewrites
+`'./'` to a workspace-relative directory. Keep the base in the source HTML to
+ensure assets resolve inside the packaged application.
 
-Nx Console is an editor extension that enriches your developer experience. It lets you run tasks, generate code, and improves code autocompletion in your IDE. It is available for VSCode and IntelliJ.
-
-[Install Nx Console &raquo;](https://nx.dev/docs/getting-started/editor-setup?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## 🔗 Learn More
-
-- [Nx Documentation](https://nx.dev/docs)
-- [Crafting Your Workspace Tutorial](https://nx.dev/docs/getting-started/tutorials/crafting-your-workspace)
-- [Module Boundaries](https://nx.dev/docs/features/enforce-module-boundaries)
-- [Releasing Packages](https://nx.dev/docs/features/manage-releases)
-- [Nx Plugins](https://nx.dev/docs/concepts/nx-plugins)
-- [Nx Cloud](https://nx.dev/nx-cloud)
-
-## 💬 Community
-
-Join the Nx community:
-
-- [Discord](https://go.nx.dev/community)
-- [X (Twitter)](https://twitter.com/nxdevtools)
-- [LinkedIn](https://www.linkedin.com/company/nrwl)
-- [YouTube](https://www.youtube.com/@nxdevtools)
-- [Blog](https://nx.dev/blog)
+The main process disables TypeScript `importHelpers`, keeping its helpers inside
+the bundle instead of depending on an uncollected `tslib` runtime package.

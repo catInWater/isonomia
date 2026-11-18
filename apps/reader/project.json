@@ -1,0 +1,70 @@
+{
+  "name": "reader",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/reader/src",
+  "projectType": "application",
+  "implicitDependencies": ["reader-ui"],
+  "targets": {
+    "build": {
+      "executor": "nx-electron:build",
+      "cache": true,
+      "dependsOn": ["^build"],
+      "defaultConfiguration": "production",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/apps/reader",
+        "main": "apps/reader/src/main.ts",
+        "tsConfig": "apps/reader/tsconfig.app.json",
+        "assets": ["apps/reader/src/assets"]
+      },
+      "configurations": {
+        "development": {},
+        "production": {
+          "optimization": true,
+          "extractLicenses": true,
+          "inspect": false,
+          "fileReplacements": [
+            {
+              "replace": "apps/reader/src/environments/environment.ts",
+              "with": "apps/reader/src/environments/environment.prod.ts"
+            }
+          ]
+        }
+      }
+    },
+    "serve": {
+      "executor": "nx-electron:execute",
+      "continuous": true,
+      "options": {
+        "buildTarget": "reader:build:development",
+        "waitUntilTargets": ["reader-ui:serve"]
+      }
+    },
+    "package": {
+      "executor": "nx-electron:package",
+      "dependsOn": ["build"],
+      "options": {
+        "publishPolicy": "never",
+        "name": "reader",
+        "frontendProject": "reader-ui",
+        "sourcePath": "dist/apps",
+        "outputPath": "dist/packages",
+        "prepackageOnly": true
+      }
+    },
+    "make": {
+      "executor": "nx-electron:make",
+      "dependsOn": ["build"],
+      "options": {
+        "publishPolicy": "never",
+        "name": "reader",
+        "frontendProject": "reader-ui",
+        "sourcePath": "dist/apps",
+        "outputPath": "dist/executables"
+      }
+    },
+    "lint": {
+      "command": "eslint apps/reader/**/*.ts"
+    }
+  }
+}

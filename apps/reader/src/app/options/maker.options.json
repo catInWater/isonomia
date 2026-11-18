@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../../../node_modules/nx-electron/src/validation/maker.schema.json",
+  "appId": "org.isonomia.reader",
+  "productName": "Reader",
+  "directories": {
+    "app": "dist/apps/reader"
+  },
+  "extraMetadata": {
+    "name": "reader",
+    "main": "index.js",
+    "description": "Reader desktop application"
+  }
+}

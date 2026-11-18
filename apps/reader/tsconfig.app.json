@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../../dist/out-tsc/reader",
+    "tsBuildInfoFile": "../../dist/out-tsc/reader/tsconfig.app.tsbuildinfo",
+    "rootDir": "src",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "emitDeclarationOnly": false,
+    "importHelpers": false,
+    "types": ["node"]
+  },
+  "exclude": ["**/*.spec.ts", "**/*.test.ts"],
+  "include": ["src/**/*.ts"]
+}
