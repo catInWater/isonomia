@@ -15,7 +15,14 @@
         "outputPath": "dist/apps/reader",
         "main": "apps/reader/src/main.ts",
         "tsConfig": "apps/reader/tsconfig.app.json",
-        "assets": ["apps/reader/src/assets"]
+        "assets": [
+          "apps/reader/src/assets",
+          {
+            "input": "apps/reader/src/app/storage",
+            "glob": "*.cjs",
+            "output": "storage"
+          }
+        ]
       },
       "configurations": {
         "development": {},
@@ -65,6 +72,18 @@
     },
     "lint": {
       "command": "eslint apps/reader/**/*.ts"
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node --test tests/*/*.test.cjs && node tools/fixtures.cjs --check" },
+      "inputs": ["default", "{workspaceRoot}/tests/**/*", "{workspaceRoot}/tools/**/*"],
+      "cache": true
+    },
+    "spec-check": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node tools/validate-specs.cjs" },
+      "inputs": ["default", "{workspaceRoot}/tools/validate-specs.cjs", "{workspaceRoot}/.claude/docs/**/*.md", "{workspaceRoot}/README.md"],
+      "cache": true
     }
   }
 }

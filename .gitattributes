@@ -1,0 +1,2 @@
+# Synthetic fixtures are byte-addressed artifacts; never normalize their newlines.
+tests/fixtures/** -text
