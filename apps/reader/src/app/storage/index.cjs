@@ -18,6 +18,10 @@ class StorageError extends Error {
 function fail(code, message, details, cause) {
   throw new StorageError(code, message, details, cause);
 }
+function comparablePath(value) {
+  if (process.platform !== 'win32') return value;
+  return (value.startsWith('\\\\?\\') ? value.slice(4) : value).toLowerCase();
+}
 function validateId(id) {
   if (
     typeof id !== 'string' ||
@@ -330,7 +334,11 @@ class DurableStore {
     return this._queue(id, async () => {
       const directory = path.join(this.root, id);
       const realRoot = await fs.realpath(this.root).catch(() => '');
-      if (!realRoot || path.dirname(path.resolve(directory)) !== realRoot)
+      if (
+        !realRoot ||
+        comparablePath(path.dirname(path.resolve(directory))) !==
+          comparablePath(realRoot)
+      )
         fail('UNSAFE_PATH', 'Storage record path is invalid.');
       await fs.rm(directory, { recursive: true, force: true });
     });
