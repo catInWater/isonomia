@@ -31,13 +31,13 @@ export class LibraryManager {
 export function parseEpub(buffer: Buffer): {
   title: string;
   author: string;
-  chapters: { id: string; title: string; text: string }[];
+  chapters: { id: string; title: string; text: string; blocks: string[] }[];
   hasToc: boolean;
 };
 export function parseTxt(buffer: Buffer): {
   title: string;
   author: string;
-  chapters: { id: string; title: string; text: string }[];
+  chapters: { id: string; title: string; text: string; blocks: string[] }[];
   encoding: string;
 };
 export function decodeTxt(buffer: Buffer): { text: string; encoding: string };

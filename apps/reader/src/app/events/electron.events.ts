@@ -1,8 +1,11 @@
 import { app, dialog, ipcMain } from 'electron';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import App from '../app';
 import { isTrustedSender, validateRequest } from '../api/security';
+
+function publicBook<T extends { fileName?: string }>(book: T) {
+  const { fileName: _fileName, ...safeBook } = book;
+  return safeBook;
+}
 
 export default class ElectronEvents {
   static bootstrapElectronEvents(): Electron.IpcMain {
@@ -17,6 +20,9 @@ export default class ElectronEvents {
       'libraryImport',
       'libraryRemove',
       'libraryOpen',
+      'openBook',
+      'readChapter',
+      'saveReading',
     ]) {
       ipcMain.handle(`reader:${method}`, async (event, ...args: unknown[]) => {
         if (
@@ -30,8 +36,20 @@ export default class ElectronEvents {
           throw new Error('请求来源无效。');
         }
         validateRequest(method, args);
+        if (['openBook', 'readChapter', 'saveReading'].includes(method)) {
+          if (!App.reading) throw new Error('本地阅读数据暂不可用。');
+          if (method === 'openBook') return App.reading.openBook(args[0] as { bookId: string });
+          if (method === 'readChapter') return App.reading.readChapter(args[0] as { bookId: string; chapterId: string });
+          return App.reading.saveReading(args[0] as import('@reader/storage-bridge').SaveReadingRequest);
+        }
+        if (method === 'libraryOpen') {
+          if (!App.reading) throw new Error('本地阅读数据暂不可用。');
+          // Compatibility for Phase 1 clients, always derived from the safe adapter.
+          const { book } = await App.reading.openBook({ bookId: args[0] as string });
+          return { book, content: null };
+        }
         if (method === 'version') return app.getVersion();
-        if (method === 'libraryList') return (await App.library?.list()) ?? [];
+        if (method === 'libraryList') return ((await App.library?.list()) ?? []).map(publicBook);
         if (method === 'libraryImport') {
           const result = await dialog.showOpenDialog(App.mainWindow!, {
             title: '导入书籍',
@@ -42,7 +60,8 @@ export default class ElectronEvents {
           const imported = [];
           for (const file of result.filePaths) {
             try {
-              imported.push(await App.library?.importFile(file));
+              const book = await App.library?.importFile(file);
+              if (book) imported.push(publicBook(book));
             } catch (error) {
               if ((error as { code?: string }).code === 'DUPLICATE') {
                 const choice = await dialog.showMessageBox(App.mainWindow!, {
@@ -56,7 +75,8 @@ export default class ElectronEvents {
                   cancelId: 0,
                 });
                 if (choice.response === 1) {
-                  imported.push(await App.library?.importFile(file, true));
+                  const book = await App.library?.importFile(file, true);
+                  if (book) imported.push(publicBook(book));
                   continue;
                 }
               }
@@ -69,23 +89,10 @@ export default class ElectronEvents {
           return imported;
         }
         if (method === 'libraryRemove')
-          return await App.library!.remove(
+          return publicBook(await App.library!.remove(
             args[0] as string,
             args[1] as boolean,
-          );
-        if (method === 'libraryOpen') {
-          const book = (await App.library!.list()).find(
-            (item) => item.bookId === args[0],
-          );
-          if (!book || book.fileStatus !== 'available')
-            throw new Error('书籍文件不可用。');
-          const filePath = join(App.libraryRoot, 'books', book.fileName);
-          const bytes = await readFile(filePath);
-          return {
-            book,
-            content: book.format === 'txt' ? bytes.toString('utf8') : null,
-          };
-        }
+          ));
         if (method === 'storageStatus') {
           if (!App.store) {
             return {

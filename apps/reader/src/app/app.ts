@@ -7,6 +7,7 @@ import { allowRequest, rendererDocument, validJson } from './api/security';
 import { DurableStore } from './storage/index.cjs';
 import type { Json } from './storage/index.cjs';
 import { LibraryManager } from './library/index.cjs';
+import { ReadingManager } from './library/reading.cjs';
 
 export default class App {
   // Keep a global reference of the window object, if you don't, the window will
@@ -18,6 +19,7 @@ export default class App {
   static storageAvailable = false;
   static store: InstanceType<typeof DurableStore> | null = null;
   static library: InstanceType<typeof LibraryManager> | null = null;
+  static reading: InstanceType<typeof ReadingManager> | null = null;
   static libraryRoot = '';
   static storageError = '';
 
@@ -80,6 +82,7 @@ export default class App {
       });
       App.libraryRoot = root;
       App.library = new LibraryManager({ root, store: App.store });
+      App.reading = new ReadingManager({ root, store: App.store, library: App.library });
       App.storageAvailable = true;
     } catch (error) {
       App.storageAvailable = false;

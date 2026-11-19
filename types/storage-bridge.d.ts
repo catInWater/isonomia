@@ -39,9 +39,13 @@ export interface StorageBridge {
   libraryOpen(
     bookId: string,
   ): Promise<{ book: BookSummary; content: string | null }>;
+  openBook(request: { bookId: string }): Promise<OpenedBook>;
+  readChapter(request: { bookId: string; chapterId: string }): Promise<ReaderChapter>;
+  saveReading(request: SaveReadingRequest): Promise<{ lastReadAt: string }>;
 }
 export interface BookSummary {
   bookId: string;
+  contentHash: string;
   title: string;
   author: string;
   format: 'epub' | 'txt';
@@ -50,6 +54,32 @@ export interface BookSummary {
   lastReadAt: string | null;
   chapters: { id: string; title: string }[];
   encoding: string | null;
+}
+export interface ReadingPosition {
+  chapterId: string;
+  blockIndex: number;
+  /** UTF-16 code-unit offset into a text block, independent of screen layout. */
+  offset: number;
+}
+export interface ReadingPreferences {
+  mode: 'scroll' | 'paginated';
+  fontSize: number;
+  lineHeight: number;
+  pageMargin: number;
+  fontFamily: 'default' | 'serif' | 'sans-serif' | 'monospace';
+  theme: 'light' | 'dark' | 'sepia';
+}
+export interface ReaderChapter { id: string; title: string; blocks: string[] }
+export interface OpenedBook {
+  book: BookSummary;
+  position: ReadingPosition;
+  preferences: ReadingPreferences;
+}
+export interface SaveReadingRequest {
+  bookId: string;
+  contentHash: string;
+  position: ReadingPosition;
+  preferences: ReadingPreferences;
 }
 export interface ImportFailure {
   error: string;
