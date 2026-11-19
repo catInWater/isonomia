@@ -416,7 +416,21 @@ export function App() {
     }
     const chapterIndex = opened.book.chapters.findIndex((item) => item.id === chapter.id);
     const next = opened.book.chapters[chapterIndex + direction];
-    if (next) void loadChapter(next.id);
+    if (next) {
+      if (direction < 0) {
+        void window.reader.readChapter({ bookId: opened.book.bookId, chapterId: next.id })
+          .then((result) => {
+            const blockIndex = Math.max(0, result.blocks.length - 1);
+            const block = result.blocks[blockIndex] || '';
+            return loadChapter(next.id, {
+              chapterId: next.id,
+              blockIndex,
+              offset: safeBoundary(block, block.length),
+            });
+          })
+          .catch((error: unknown) => setMessage(error instanceof Error ? error.message : '无法打开此章节。'));
+      } else void loadChapter(next.id);
+    }
   }, [opened, chapter, pageIndex, pageCount, pages, queueSave, loadChapter, preferences.mode]);
 
   useEffect(() => {
