@@ -84,6 +84,29 @@ function checkPosition(chapters, position) {
   )
     fail('INVALID_POSITION', '阅读位置不在有效正文范围内。');
 }
+// Version 1 stored literal [alt] placeholders where version 2 uses one image marker.
+// Translate legacy content offsets once; never treat an invalid record as a new session.
+function legacyPosition(chapters, position) {
+  if (!validPosition(position)) fail('INVALID_POSITION', '阅读位置无效。');
+  const chapter = chapters.find((item) => item.id === position.chapterId);
+  const block = chapter?.blocks[position.blockIndex];
+  if (typeof block !== 'string')
+    fail('INVALID_POSITION', '阅读位置不在有效正文范围内。');
+  let added = 0;
+  for (const image of chapter.images || []) {
+    if (image.blockIndex !== position.blockIndex) continue;
+    const placeholder = (image.alt ? `[${image.alt}]` : '[图片]').replace(
+      /\s+/g,
+      ' ',
+    );
+    const legacyStart = image.offset + added;
+    if (position.offset <= legacyStart) break;
+    if (position.offset < legacyStart + placeholder.length)
+      return { ...position, offset: image.offset };
+    added += placeholder.length - 1;
+  }
+  return { ...position, offset: position.offset - added };
+}
 class ReadingManager {
   constructor({ root, store, library }) {
     this.root = root;
@@ -210,10 +233,18 @@ class ReadingManager {
       if (record) {
         if (record.data.contentHash !== book.contentHash)
           fail('CONTENT_CHANGED', '阅读记录的内容版本不匹配，请恢复原始书籍。');
-        checkPosition(chapters, record.data.position);
+        if (
+          record.data.adapterVersion !== undefined &&
+          record.data.adapterVersion !== 2
+        )
+          fail('INVALID_STATE', '阅读记录格式版本不受支持。');
+        position =
+          record.data.adapterVersion === 2
+            ? record.data.position
+            : legacyPosition(chapters, record.data.position);
+        checkPosition(chapters, position);
         if (!validPreferences(record.data.preferences))
           fail('INVALID_STATE', '阅读设置无效，请恢复阅读记录。');
-        position = record.data.position;
         preferences = record.data.preferences;
       }
       const lastReadAt = await this._touch(book.bookId);
@@ -232,6 +263,9 @@ class ReadingManager {
         id: chapter.id,
         title: chapter.title,
         blocks: [...chapter.blocks],
+        images: (chapter.images || []).map(({ size: _size, ...image }) => ({
+          ...image,
+        })),
       };
     });
   }
@@ -247,16 +281,22 @@ class ReadingManager {
       const current = await this.store.load(id);
       if (current && current.data.contentHash !== book.contentHash)
         fail('CONTENT_CHANGED', '阅读记录的内容版本不匹配。');
+      const lastReadAt = book.lastReadAt || '';
+      const lastReadTime = Date.parse(lastReadAt);
+      const shouldTouch =
+        !Number.isFinite(lastReadTime) || Date.now() - lastReadTime >= 60_000;
+      const savedAt = shouldTouch ? await this._touch(book.bookId) : lastReadAt;
       await this.store.save(
         id,
         {
+          adapterVersion: 2,
           contentHash: book.contentHash,
           position: request.position,
           preferences: request.preferences,
         },
         current?.revision ?? 0,
       );
-      return { lastReadAt: book.lastReadAt || new Date().toISOString() };
+      return { lastReadAt: savedAt || new Date().toISOString() };
     });
   }
 }

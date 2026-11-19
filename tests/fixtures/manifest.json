@@ -46,6 +46,12 @@
       "purpose": "Minimal EPUB 2 Chinese with NCX and repeated quote"
     },
     {
+      "name": "epub-images.epub",
+      "bytes": 1884,
+      "sha256": "f40ebd35832898bdebafbff0a602d51b4be713f46d80345ff789f6c95a73d3e9",
+      "purpose": "EPUB with common ZIP flags, inline PNG, and EPUB 2 cover metadata"
+    },
+    {
       "name": "reflow.epub",
       "bytes": 2212,
       "sha256": "7a3a684f4a0711f0551aa47fee00e9e1854e8a0cd571d6c1701f2621f3f89b4e",

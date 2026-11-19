@@ -19,6 +19,10 @@ test('S00-A6 IPC rejects subframes, external origins and unexpected arguments', 
     assert.equal(isTrustedSender(url, main, document), false);
   }
   assert.doesNotThrow(() => validateRequest('version', []));
+  assert.doesNotThrow(() =>
+    validateRequest('libraryCover', [`book-${'a'.repeat(32)}`]),
+  );
+  assert.throws(() => validateRequest('libraryCover', ['/etc/passwd']));
   for (const method of ['quit', 'readFile', '__proto__']) {
     assert.throws(() => validateRequest(method, []));
   }
@@ -29,6 +33,13 @@ test('S00-A6 IPC rejects subframes, external origins and unexpected arguments', 
 });
 test('S00-A6 production allows only bundled assets and blocks remote/local escapes', () => {
   assert.equal(allowRequest('file:///opt/reader-ui/main.js', document), true);
+  assert.equal(
+    allowRequest(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+      document,
+    ),
+    true,
+  );
   for (const url of [
     'https://evil.test/a',
     'http://localhost:4200',

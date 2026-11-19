@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type {
   BookSummary,
   ImportFailure,
@@ -9,11 +9,13 @@ import type {
   ReadingPreferences,
 } from '@reader/storage-bridge';
 import styles from './app.module.css';
+import { makePages, safeBoundary } from './pagination';
 
 declare global {
   interface Window {
     reader: {
       libraryList(): Promise<BookSummary[]>;
+      libraryCover(bookId: string): Promise<string | null>;
       libraryImport(): Promise<Array<BookSummary | ImportFailure>>;
       libraryRemove(id: string, keepNotes: boolean): Promise<BookSummary>;
       openBook(input: { bookId: string }): Promise<OpenedBook>;
@@ -33,8 +35,18 @@ declare global {
 
 type Sort = 'title' | 'author' | 'recent' | 'imported';
 type ReaderStyle = CSSProperties & Record<`--${string}`, string | number>;
-type PagePart = { blockIndex: number; start: number; text: string };
-type ReaderPage = PagePart[];
+type ChapterImage = {
+  blockIndex: number;
+  offset: number;
+  src: string;
+  alt: string;
+  inline?: boolean;
+};
+
+const SAFE_IMAGE_DATA_URL =
+  /^data:image\/(?:jpeg|png|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const isSafeImageDataUrl = (value: string) =>
+  value.length <= 2_800_000 && SAFE_IMAGE_DATA_URL.test(value);
 
 const DEFAULT_PREFERENCES: ReadingPreferences = {
   mode: 'scroll',
@@ -60,51 +72,131 @@ function estimatePageCapacity(
   return Math.max(400, Math.min(6000, charsPerLine * lines * 0.88));
 }
 
-function safeBoundary(value: string, offset: number): number {
-  const clamped = Math.max(0, Math.min(value.length, Math.floor(offset)));
-  return clamped > 0 &&
-    clamped < value.length &&
-    /[\uD800-\uDBFF]/.test(value[clamped - 1]) &&
-    /[\uDC00-\uDFFF]/.test(value[clamped])
-    ? clamped - 1
-    : clamped;
+function BookImage({
+  src,
+  alt,
+  inline,
+}: {
+  src: string;
+  alt: string;
+  inline: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed)
+    return (
+      <span
+        className={inline ? styles.inlineImageFallback : styles.imageFallback}
+      >
+        {alt || '[图片无法显示]'}
+      </span>
+    );
+  return (
+    <img
+      className={inline ? styles.inlineBookImage : styles.bookImage}
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
-function makePages(chapter: ReaderChapter, capacity: number): ReaderPage[] {
-  const pages: ReaderPage[] = [];
-  let page: ReaderPage = [];
-  let used = 0;
-  const finishPage = () => {
-    if (page.length) pages.push(page);
-    page = [];
-    used = 0;
-  };
-  chapter.blocks.forEach((block, blockIndex) => {
-    if (!block.length) return;
-    let start = 0;
-    while (start < block.length) {
-      let available = Math.floor(capacity - used - (page.length ? 32 : 0));
-      if (available < 1 && page.length) {
-        finishPage();
-        available = Math.floor(capacity);
-      }
-      available = Math.max(1, available);
-      let end = safeBoundary(block, Math.min(block.length, start + available));
-      if (end <= start)
-        end = Math.min(block.length, start + Math.max(2, available));
-      if (end < block.length) {
-        const boundary = block.lastIndexOf(' ', end);
-        if (boundary > start + Math.floor(available * 0.55)) end = boundary + 1;
-      }
-      page.push({ blockIndex, start, text: block.slice(start, end) });
-      start = end;
-      used += end - page[page.length - 1].start + 32;
-      if (start < block.length) finishPage();
-    }
-    if (used >= capacity) finishPage();
+function renderImageAwareText(
+  text: string,
+  images: ChapterImage[],
+  startOffset = 0,
+  instanceKey = '',
+): ReactNode[] {
+  const result: ReactNode[] = [];
+  let cursor = 0;
+  images.forEach((image, index) => {
+    const offset = Math.max(
+      0,
+      Math.min(text.length, image.offset - startOffset),
+    );
+    if (offset < cursor) return;
+    if (offset > cursor) result.push(text.slice(cursor, offset));
+    result.push(
+      isSafeImageDataUrl(image.src) ? (
+        <BookImage
+          key={`book-image-${instanceKey}-${image.blockIndex}-${image.offset}-${index}`}
+          src={image.src}
+          alt={image.alt}
+          inline={image.inline === true}
+        />
+      ) : (
+        <span
+          key={`invalid-image-${instanceKey}-${image.blockIndex}-${image.offset}-${index}`}
+          className={
+            image.inline ? styles.inlineImageFallback : styles.imageFallback
+          }
+        >
+          {image.alt || '[图片无法显示]'}
+        </span>
+      ),
+    );
+    cursor =
+      offset < text.length && text.charAt(offset) === '￼' ? offset + 1 : offset;
   });
-  finishPage();
-  return pages.length ? pages : [[]];
+  if (cursor < text.length) result.push(text.slice(cursor));
+  return result;
+}
+
+function BookCover({ book }: { book: BookSummary }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [inRange, setInRange] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if ((!book.coverMimeType && book.format !== 'epub') || !container.current)
+      return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setInRange(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInRange(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '180px' },
+    );
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, [book.bookId, book.coverMimeType, book.format]);
+
+  useEffect(() => {
+    if (!inRange || (!book.coverMimeType && book.format !== 'epub')) return;
+    let active = true;
+    void window.reader
+      .libraryCover(book.bookId)
+      .then((image) => {
+        if (active && image && isSafeImageDataUrl(image)) setSrc(image);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [book.bookId, book.coverMimeType, book.format, inRange]);
+
+  return (
+    <div className={styles.cover} ref={container}>
+      {src ? (
+        <img
+          src={src}
+          alt={`${book.title}封面`}
+          loading="lazy"
+          decoding="async"
+          onError={() => setSrc(null)}
+        />
+      ) : (
+        <span>{book.format.toUpperCase()}</span>
+      )}
+    </div>
+  );
 }
 
 export function App() {
@@ -133,10 +225,9 @@ export function App() {
   const restorePending = useRef(true);
   const focusBeforeMode = useRef<HTMLElement | null>(null);
 
-  const refresh = useCallback(
-    async () => setBooks(await window.reader.libraryList()),
-    [],
-  );
+  const refresh = useCallback(async () => {
+    setBooks(await window.reader.libraryList());
+  }, []);
   useEffect(() => {
     void refresh().catch((error: unknown) =>
       setMessage(error instanceof Error ? error.message : '无法读取书架。'),
@@ -813,7 +904,15 @@ export function App() {
                     data-block-index={index}
                     data-block-length={block.length}
                   >
-                    {block || ' '}
+                    {renderImageAwareText(
+                      block,
+                      (chapter.images || []).filter(
+                        (image) => image.blockIndex === index,
+                      ),
+                      0,
+                      chapter.id,
+                    )}
+                    {!block && ' '}
                   </p>
                 ))}
               </article>
@@ -826,7 +925,17 @@ export function App() {
                 >
                   {(pages[pageIndex] || []).map((part, index) => (
                     <p key={`${part.blockIndex}-${part.start}-${index}`}>
-                      <span>{part.text}</span>
+                      {renderImageAwareText(
+                        part.text,
+                        (chapter.images || []).filter(
+                          (image) =>
+                            image.blockIndex === part.blockIndex &&
+                            image.offset >= part.start &&
+                            image.offset < part.start + part.text.length,
+                        ),
+                        part.start,
+                        `${chapter.id}-${pageIndex}`,
+                      )}
                     </p>
                   ))}
                 </article>
@@ -994,9 +1103,7 @@ export function App() {
                 onClick={() => void openBook(book)}
                 disabled={busy}
               >
-                <div className={styles.cover}>
-                  <span>{book.format.toUpperCase()}</span>
-                </div>
+                <BookCover book={book} />
                 <div className={styles.bookInfo}>
                   <h2>{book.title}</h2>
                   <p>{book.author}</p>

@@ -39,6 +39,7 @@ export function validateRequest(method: string, args: unknown[]): void {
       method === 'libraryList' ||
       method === 'libraryImport') &&
       args.length === 0) ||
+    (method === 'libraryCover' && args.length === 1 && validBookId(args[0])) ||
     (method === 'libraryRemove' &&
       args.length === 2 &&
       validBookId(args[0]) &&
@@ -139,6 +140,11 @@ function withinJsonLimit(value: unknown): boolean {
 }
 
 export function allowRequest(url: string, documentUrl: string): boolean {
+  if (
+    url.length <= 2_800_000 &&
+    /^data:image\/(?:jpeg|png|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(url)
+  )
+    return true;
   try {
     const request = new URL(url);
     const document = new URL(documentUrl);

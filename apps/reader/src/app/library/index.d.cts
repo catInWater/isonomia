@@ -11,6 +11,7 @@ export interface BookSummary {
   lastReadAt: string | null;
   chapters: { id: string; title: string }[];
   encoding: string | null;
+  coverMimeType?: string | null;
   notesRemoved?: boolean;
 }
 export class LibraryError extends Error {
@@ -25,13 +26,28 @@ export class LibraryManager {
     };
   });
   list(): Promise<BookSummary[]>;
+  cover(bookId: string): Promise<string | null>;
   importFile(sourcePath: string, keepDuplicate?: boolean): Promise<BookSummary>;
   remove(bookId: string, keepNotes: boolean): Promise<BookSummary>;
 }
 export function parseEpub(buffer: Buffer): {
   title: string;
   author: string;
-  chapters: { id: string; title: string; text: string; blocks: string[] }[];
+  chapters: {
+    id: string;
+    title: string;
+    text: string;
+    blocks: string[];
+    images: {
+      blockIndex: number;
+      offset: number;
+      src: string;
+      alt: string;
+      inline: boolean;
+      size: number;
+    }[];
+  }[];
+  cover: { mediaType: string; bytes: Buffer; dataUrl: string } | null;
   hasToc: boolean;
 };
 export function parseTxt(buffer: Buffer): {

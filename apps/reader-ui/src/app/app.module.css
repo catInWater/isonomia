@@ -149,6 +149,46 @@ select:focus-visible {
   border-radius: 50%;
   font-size: 12px;
 }
+.cover img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+.bookImage {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 68vh;
+  margin: 1em auto;
+  object-fit: contain;
+}
+.inlineBookImage {
+  display: inline-block;
+  width: auto;
+  height: 1em;
+  max-width: 100%;
+  vertical-align: -0.12em;
+  object-fit: contain;
+}
+.scrollContent .bookImage {
+  height: auto;
+}
+.pageContent .bookImage {
+  max-height: 54vh;
+}
+.imageFallback {
+  display: block;
+  color: var(--reader-muted);
+  font-size: 0.9em;
+  text-align: center;
+}
+.inlineImageFallback {
+  display: inline-block;
+  color: var(--reader-muted);
+  font-size: 0.8em;
+  vertical-align: baseline;
+}
 .bookInfo h2 {
   margin: 12px 0 4px;
   overflow-wrap: anywhere;

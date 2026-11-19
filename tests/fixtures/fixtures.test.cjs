@@ -16,18 +16,25 @@ function unzipStored(bytes) {
   const entries = new Map();
   let offset = 0;
   while (bytes.readUInt32LE(offset) === 0x04034b50) {
-    assert.equal(bytes.readUInt16LE(offset + 8), 0);
-    const size = bytes.readUInt32LE(offset + 18);
+    const method = bytes.readUInt16LE(offset + 8);
+    assert.ok([0, 8].includes(method));
+    const compressedSize = bytes.readUInt32LE(offset + 18);
+    const uncompressedSize = bytes.readUInt32LE(offset + 22);
     const nameLength = bytes.readUInt16LE(offset + 26);
     const extraLength = bytes.readUInt16LE(offset + 28);
     const name = bytes
       .subarray(offset + 30, offset + 30 + nameLength)
       .toString();
     const start = offset + 30 + nameLength + extraLength;
-    const data = bytes.subarray(start, start + size);
+    const compressed = bytes.subarray(start, start + compressedSize);
+    const data =
+      method === 8
+        ? require('node:zlib').inflateRawSync(compressed)
+        : compressed;
+    assert.equal(data.length, uncompressedSize);
     assert.equal(crc32(data), bytes.readUInt32LE(offset + 14));
     entries.set(name, data);
-    offset = start + size;
+    offset = start + compressedSize;
   }
   assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
   const end = bytes.length - 22;
@@ -52,14 +59,14 @@ function unzipStored(bytes) {
 }
 
 test('S00/T-003: committed fixture bytes match recipe and checksums', () => {
-  assert.equal(check(), 10);
+  assert.equal(check(), 11);
 });
 
 test('S00/T-003: generation repeats byte-for-byte and detects corruption', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'reader-fixtures-'));
   try {
     generate(directory);
-    assert.equal(check(directory), 10);
+    assert.equal(check(directory), 11);
     const first = fs.readFileSync(path.join(directory, 'manifest.json'));
     generate(directory);
     assert.deepEqual(

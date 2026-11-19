@@ -17,6 +17,7 @@ export default class ElectronEvents {
       'listRecovery',
       'recover',
       'libraryList',
+      'libraryCover',
       'libraryImport',
       'libraryRemove',
       'libraryOpen',
@@ -59,6 +60,8 @@ export default class ElectronEvents {
         if (method === 'version') return app.getVersion();
         if (method === 'libraryList')
           return ((await App.library?.list()) ?? []).map(publicBook);
+        if (method === 'libraryCover')
+          return App.library?.cover(args[0] as string) ?? null;
         if (method === 'libraryImport') {
           const result = await dialog.showOpenDialog(App.mainWindow!, {
             title: '导入书籍',
@@ -84,8 +87,18 @@ export default class ElectronEvents {
                   cancelId: 0,
                 });
                 if (choice.response === 1) {
-                  const book = await App.library?.importFile(file, true);
-                  if (book) imported.push(publicBook(book));
+                  try {
+                    const book = await App.library?.importFile(file, true);
+                    if (book) imported.push(publicBook(book));
+                  } catch (retryError) {
+                    imported.push({
+                      error:
+                        retryError instanceof Error
+                          ? retryError.message
+                          : '导入失败。',
+                      fileName: file.split(/[\\/]/).at(-1),
+                    });
+                  }
                   continue;
                 }
               }

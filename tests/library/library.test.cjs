@@ -28,6 +28,33 @@ test('S01-A1 parses EPUB metadata and chapters', async () => {
   assert.equal(parsed.author, 'Reader fixture contributors');
   assert.ok(parsed.chapters.length >= 1);
 });
+test('imports local EPUB cover artwork into the private cover store', async (t) => {
+  const { root, manager } = await setup(t);
+  const sourceBytes = await fs.readFile(fixture('epub-images.epub'));
+  const expectedCover = parseEpub(sourceBytes).cover.bytes;
+  const book = await manager.importFile(fixture('epub-images.epub'));
+  assert.equal(book.coverMimeType, 'image/png');
+  assert.match(await manager.cover(book.bookId), /^data:image\/png;base64,/);
+  assert.deepEqual(
+    await fs.readFile(path.join(root, 'covers', `${book.bookId}.img`)),
+    expectedCover,
+  );
+  const catalog = await manager.store.load('library');
+  delete catalog.data.books[0].coverMimeType;
+  await manager.store.save('library', catalog.data, catalog.revision);
+  await fs.rm(path.join(root, 'covers'), { recursive: true, force: true });
+  const migratedManager = new LibraryManager({ root, store: manager.store });
+  assert.match(
+    await migratedManager.cover(book.bookId),
+    /^data:image\/png;base64,/,
+  );
+  assert.equal(
+    (await manager.store.load('library')).data.books[0].coverMimeType,
+    'image/png',
+  );
+  await manager.remove(book.bookId, false);
+  assert.equal(await manager.cover(book.bookId), null);
+});
 test('S01-A2 decodes UTF-8, BOM, and GBK TXT fixtures', async () => {
   for (const name of [
     'chinese-utf8.txt',
@@ -66,6 +93,19 @@ test('deleting book and user content removes its saved reading record', async (t
   );
   await manager.remove(book.bookId, false);
   assert.equal(await manager.store.load(`reading-${book.bookId}`), null);
+});
+test('failed removal keeps the catalog entry so deletion can be retried', async (t) => {
+  const { root, manager } = await setup(t);
+  const book = await manager.importFile(fixture('chinese-utf8.txt'));
+  const bookPath = path.join(root, 'books', book.fileName);
+  await fs.rm(bookPath);
+  await fs.mkdir(bookPath);
+  await assert.rejects(manager.remove(book.bookId, false));
+  assert.equal((await manager.list()).length, 1);
+  await fs.rmdir(bookPath);
+  await fs.copyFile(fixture('chinese-utf8.txt'), bookPath);
+  await manager.remove(book.bookId, false);
+  assert.equal((await manager.list()).length, 0);
 });
 test('remove refuses a compromised catalog file name before touching outside files', async (t) => {
   const { root, manager } = await setup(t);
