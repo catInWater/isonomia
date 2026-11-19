@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { deflateRawSync, deflateSync } = require('node:zlib');
 const root = path.resolve(__dirname, '../tests/fixtures');
 
 function crc32(bytes) {
@@ -15,22 +16,26 @@ function crc32(bytes) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-// Store-only ZIP: fixed DOS epoch, no platform metadata, mimetype first.
-function zip(entries) {
+// Deterministic ZIP: fixed DOS epoch, no platform metadata, mimetype first.
+function zip(entries, { flags = 0x800, method = 0 } = {}) {
   const parts = [];
   const central = [];
   let offset = 0;
   for (const [name, value] of entries) {
     const filename = Buffer.from(name);
-    const data = Buffer.from(value);
+    const uncompressed = Buffer.from(value);
+    const entryMethod = typeof method === 'function' ? method(name) : method;
+    const data =
+      entryMethod === 8 ? deflateRawSync(uncompressed) : uncompressed;
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x800, 6);
+    local.writeUInt16LE(flags, 6);
+    local.writeUInt16LE(entryMethod, 8);
     local.writeUInt16LE(33, 12);
-    local.writeUInt32LE(crc32(data), 14);
+    local.writeUInt32LE(crc32(uncompressed), 14);
     local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
+    local.writeUInt32LE(uncompressed.length, 22);
     local.writeUInt16LE(filename.length, 26);
     const directory = Buffer.alloc(46);
     directory.writeUInt32LE(0x02014b50);
@@ -51,32 +56,66 @@ function zip(entries) {
   return Buffer.concat([...parts, index, end]);
 }
 
-function epub({ missingToc = false, reflow = false } = {}) {
+function epub({
+  missingToc = false,
+  reflow = false,
+  images = false,
+  flags = 0x800,
+  method = 0,
+  body: customBody,
+} = {}) {
   const body =
-    '<h1>第一章 合成书</h1><p>窗外有风。孤独不是答案。</p><p>第二处：窗外有风。</p>';
-  return zip([
-    ['mimetype', 'application/epub+zip'],
-    [
-      'META-INF/container.xml',
-      '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
-    ],
-    [
-      'OEBPS/book.opf',
-      `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:isonomia:synthetic:v1</dc:identifier><dc:title>合成测试书</dc:title><dc:language>zh-CN</dc:language><dc:creator>Reader fixture contributors</dc:creator></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>${missingToc ? '' : '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'}</manifest><spine${missingToc ? '' : ' toc="ncx"'}><itemref idref="chapter"/></spine></package>`,
-    ],
-    [
-      'OEBPS/chapter.xhtml',
-      `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN"><head><title>第一章</title>${reflow ? '<style>body { font-size: 150%; line-height: 2; margin: 3em; }</style>' : ''}</head><body>${body}</body></html>`,
-    ],
-    ...(missingToc
-      ? []
-      : [
-          [
-            'OEBPS/toc.ncx',
-            '<?xml version="1.0" encoding="UTF-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="urn:isonomia:synthetic:v1"/><meta name="dtb:depth" content="1"/><meta name="dtb:totalPageCount" content="0"/><meta name="dtb:maxPageNumber" content="0"/></head><docTitle><text>合成测试书</text></docTitle><navMap><navPoint id="chapter" playOrder="1"><navLabel><text>第一章</text></navLabel><content src="chapter.xhtml"/></navPoint></navMap></ncx>',
-          ],
-        ]),
+    customBody ??
+    (images
+      ? '<h1>第一章 合成书</h1><p>窗外有风。<img src="images/pixel.png" alt="红色像素"/>孤独不是答案。</p><p>第二处：窗外有风。</p>'
+      : '<h1>第一章 合成书</h1><p>窗外有风。孤独不是答案。</p><p>第二处：窗外有风。</p>');
+  const pngChunk = (type, data) => {
+    const name = Buffer.from(type);
+    const chunk = Buffer.alloc(data.length + 12);
+    chunk.writeUInt32BE(data.length, 0);
+    name.copy(chunk, 4);
+    data.copy(chunk, 8);
+    chunk.writeUInt32BE(crc32(Buffer.concat([name, data])), data.length + 8);
+    return chunk;
+  };
+  const pngHeader = Buffer.alloc(13);
+  pngHeader.writeUInt32BE(1, 0);
+  pngHeader.writeUInt32BE(1, 4);
+  pngHeader[8] = 8;
+  pngHeader[9] = 6;
+  const png = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', pngHeader),
+    pngChunk('IDAT', deflateSync(Buffer.from([0, 255, 0, 0, 255]))),
+    pngChunk('IEND', Buffer.alloc(0)),
   ]);
+  return zip(
+    [
+      ['mimetype', 'application/epub+zip'],
+      ...(images ? [['OEBPS/images/pixel.png', png]] : []),
+      [
+        'META-INF/container.xml',
+        '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+      ],
+      [
+        'OEBPS/book.opf',
+        `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:isonomia:synthetic:v1</dc:identifier><dc:title>合成测试书</dc:title><dc:language>zh-CN</dc:language><dc:creator>Reader fixture contributors</dc:creator>${images ? '<meta name="cover" content="cover"/>' : ''}</metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>${images ? '<item id="pixel" href="images/pixel.png" media-type="image/png"/><item id="cover" href="images/pixel.png" media-type="image/png"/>' : ''}${missingToc ? '' : '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'}</manifest><spine${missingToc ? '' : ' toc="ncx"'}><itemref idref="chapter"/></spine></package>`,
+      ],
+      [
+        'OEBPS/chapter.xhtml',
+        `<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN"><head><title>第一章</title>${reflow ? '<style>body { font-size: 150%; line-height: 2; margin: 3em; }</style>' : ''}</head><body>${body}</body></html>`,
+      ],
+      ...(missingToc
+        ? []
+        : [
+            [
+              'OEBPS/toc.ncx',
+              '<?xml version="1.0" encoding="UTF-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="urn:isonomia:synthetic:v1"/><meta name="dtb:depth" content="1"/><meta name="dtb:totalPageCount" content="0"/><meta name="dtb:maxPageNumber" content="0"/></head><docTitle><text>合成测试书</text></docTitle><navMap><navPoint id="chapter" playOrder="1"><navLabel><text>第一章</text></navLabel><content src="chapter.xhtml"/></navPoint></navMap></ncx>',
+            ],
+          ]),
+    ],
+    { flags, method },
+  );
 }
 
 function artifacts() {
@@ -113,6 +152,15 @@ function artifacts() {
       'chinese.epub',
       epub(),
       'Minimal EPUB 2 Chinese with NCX and repeated quote',
+    ],
+    [
+      'epub-images.epub',
+      epub({
+        images: true,
+        flags: 0x0816,
+        method: (name) => (name === 'mimetype' ? 0 : 8),
+      }),
+      'EPUB with common ZIP flags, inline PNG, and EPUB 2 cover metadata',
     ],
     [
       'reflow.epub',

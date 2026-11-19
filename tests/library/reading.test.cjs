@@ -15,23 +15,30 @@ const {
   DEFAULT_PREFERENCES,
   validReadingRequest,
 } = require('../../apps/reader/src/app/library/reading.cjs');
-const { zip } = require('../../tools/fixtures.cjs');
+const { zip, epub } = require('../../tools/fixtures.cjs');
+const {
+  imageDataUrl,
+} = require('../../apps/reader/src/app/library/content.cjs');
 const fixtures = path.join(__dirname, '..', 'fixtures');
 function epubWith(
   href = 'chapter.xhtml',
   chapter = '<html><body><p>正文</p></body></html>',
+  zipOptions = {},
 ) {
-  return zip([
+  return zip(
     [
-      'META-INF/container.xml',
-      '<container><rootfiles><rootfile full-path="OEBPS/book.opf"/></rootfiles></container>',
+      [
+        'META-INF/container.xml',
+        '<container><rootfiles><rootfile full-path="OEBPS/book.opf"/></rootfiles></container>',
+      ],
+      [
+        'OEBPS/book.opf',
+        `<package><metadata><title>测试书</title></metadata><manifest><item id="chapter" href="${href}" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>`,
+      ],
+      ['OEBPS/chapter.xhtml', chapter],
     ],
-    [
-      'OEBPS/book.opf',
-      `<package><metadata><title>测试书</title></metadata><manifest><item id="chapter" href="${href}" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>`,
-    ],
-    ['OEBPS/chapter.xhtml', chapter],
-  ]);
+    zipOptions,
+  );
 }
 async function setup(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'reader-reading-'));
@@ -66,6 +73,16 @@ test('bounded EPUB adapter returns plain text blocks and rejects active XML or o
     ),
   );
   assert.equal(inert.chapters[0].blocks.join(' '), '[书内图片] 安全正文');
+  assert.equal(
+    parseEpub(
+      epubWith(
+        'chapter.xhtml',
+        '<html><body><img src="../../secret.png" alt="越界图片"/><p>仍可读</p></body></html>',
+        { flags: 0x0816, method: 8 },
+      ),
+    ).chapters[0].blocks.join(' '),
+    '[越界图片] 仍可读',
+  );
   assert.throws(() => parseEpub(epubWith('../../secret.xhtml')), {
     code: 'INVALID_EPUB',
   });
@@ -86,6 +103,101 @@ test('bounded EPUB adapter returns plain text blocks and rejects active XML or o
     code: 'INVALID_EPUB',
   });
 });
+test('oversized image dimensions are rejected before making renderable data URLs', () => {
+  const bytes = Buffer.alloc(24);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
+  bytes.write('IHDR', 12, 'ascii');
+  bytes.writeUInt32BE(20_000, 16);
+  bytes.writeUInt32BE(1, 20);
+  assert.equal(imageDataUrl(bytes, 'image/png'), null);
+});
+test('common EPUB ZIP flags are accepted and safe cover/inline images are extracted', async () => {
+  const parsed = parseEpub(
+    await fs.readFile(path.join(fixtures, 'epub-images.epub')),
+  );
+  assert.equal(parsed.cover.mediaType, 'image/png');
+  assert.equal(parsed.chapters[0].images.length, 1);
+  assert.equal(parsed.chapters[0].images[0].alt, '红色像素');
+  assert.equal(parsed.chapters[0].images[0].blockIndex, 1);
+  assert.match(parsed.chapters[0].images[0].src, /^data:image\/png;base64,/);
+  assert.ok(parsed.chapters[0].blocks[1].includes('￼'));
+  assert.throws(
+    () =>
+      parseEpub(
+        epubWith(
+          'chapter.xhtml',
+          '<html><body><p>encrypted</p></body></html>',
+          { flags: 0x0801 },
+        ),
+      ),
+    { code: 'INVALID_EPUB' },
+  );
+});
+test('image offsets follow normalized whitespace and repeated inline references', () => {
+  const parsed = parseEpub(
+    epub({
+      images: true,
+      body: '<p>  前文 \n <img src="images/pixel.png"/> 后文 <img class="inline" src="images/pixel.png" alt="像素"/>  </p>',
+    }),
+  );
+  const chapter = parsed.chapters[0];
+  const blockIndex = chapter.images[0].blockIndex;
+  assert.equal(chapter.blocks[blockIndex], '前文 ￼ 后文 ￼');
+  assert.equal(chapter.images.length, 2);
+  assert.equal(chapter.images[0].inline, false);
+  assert.equal(chapter.images[1].inline, true);
+  assert.deepEqual(
+    chapter.images.map((image) => image.offset),
+    [3, 8],
+  );
+  for (const image of chapter.images) {
+    assert.equal(chapter.blocks[image.blockIndex][image.offset], '￼');
+    assert.match(image.src, /^data:image\/png;base64,/);
+    assert.equal('assetId' in image, false);
+  }
+});
+test('EPUB 3 covers use manifest properties and unsafe image types fall back to alt text', async () => {
+  const png = parseEpub(
+    await fs.readFile(path.join(fixtures, 'epub-images.epub')),
+  ).cover.bytes;
+  const build = (mediaType, bytes) =>
+    zip([
+      [
+        'META-INF/container.xml',
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      ],
+      [
+        'book.opf',
+        `<package version="3.0"><metadata><title>EPUB 3</title></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="art" href="art.png" media-type="${mediaType}" properties="cover-image"/></manifest><spine><itemref idref="chapter"/></spine></package>`,
+      ],
+      [
+        'chapter.xhtml',
+        '<html><body><p><img src="art.png" alt="插图"/></p><p>安全正文</p></body></html>',
+      ],
+      ['art.png', bytes],
+    ]);
+  assert.equal(parseEpub(build('image/png', png)).cover.mediaType, 'image/png');
+  for (const [mediaType, bytes] of [
+    ['image/jpeg', png],
+    ['image/svg+xml', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')],
+    ['image/png', Buffer.from('not an image')],
+  ]) {
+    const parsed = parseEpub(build(mediaType, bytes));
+    assert.equal(parsed.cover, null);
+    assert.equal(parsed.chapters[0].images.length, 0);
+    assert.equal(parsed.chapters[0].blocks.join(' '), '[插图] 安全正文');
+  }
+});
+test('repeated image references stay bounded and excess images keep readable placeholders', () => {
+  const parsed = parseEpub(
+    epub({
+      images: true,
+      body: `<p>${'<img src="images/pixel.png" alt="像素"/>'.repeat(4100)}</p>`,
+    }),
+  );
+  assert.equal(parsed.chapters[0].images.length, 4096);
+  assert.ok(parsed.chapters[0].blocks[0].endsWith('[像素]'.repeat(4)));
+});
 test('TXT exposes structured paragraph blocks while preserving encoding and chapters', async () => {
   const parsed = parseTxt(
     await fs.readFile(path.join(fixtures, 'chinese-utf8.txt')),
@@ -96,6 +208,21 @@ test('TXT exposes structured paragraph blocks while preserving encoding and chap
       chapter.blocks.every((block) => typeof block === 'string'),
     ),
   );
+});
+test('library reads return safe inline images without EPUB file paths', async (t) => {
+  const { library, manager } = await setup(t);
+  const book = await library.importFile(
+    path.join(fixtures, 'epub-images.epub'),
+  );
+  const opened = await manager.openBook({ bookId: book.bookId });
+  const chapter = await manager.readChapter({
+    bookId: opened.book.bookId,
+    chapterId: 'chapter-1',
+  });
+  assert.equal(chapter.images.length, 1);
+  assert.match(chapter.images[0].src, /^data:image\/png;base64,/);
+  assert.ok(chapter.blocks[1].includes('￼'));
+  assert.equal('fileName' in opened.book, false);
 });
 test('progress and typography persist; open updates lastReadAt; content changes fail closed', async (t) => {
   const { root, library, manager, store } = await setup(t);
@@ -129,12 +256,26 @@ test('progress and typography persist; open updates lastReadAt; content changes 
     fontFamily: 'serif',
     theme: 'sepia',
   };
-  await manager.saveReading({
+  const catalog = await store.load('library');
+  catalog.data.books = catalog.data.books.map((item) =>
+    item.bookId === book.bookId
+      ? { ...item, lastReadAt: '2000-01-01T00:00:00.000Z' }
+      : item,
+  );
+  await store.save('library', catalog.data, catalog.revision);
+  const saved = await manager.saveReading({
     bookId: book.bookId,
     contentHash: book.contentHash,
     position,
     preferences,
   });
+  assert.ok(
+    Date.parse(saved.lastReadAt) > Date.parse('2000-01-01T00:00:00.000Z'),
+  );
+  assert.equal(
+    (await store.load('library')).data.books[0].lastReadAt,
+    saved.lastReadAt,
+  );
   const restored = await manager.openBook({ bookId: book.bookId });
   assert.deepEqual(restored.position, position);
   assert.deepEqual(restored.preferences, preferences);

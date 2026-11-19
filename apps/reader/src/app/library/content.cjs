@@ -4,6 +4,16 @@ const { inflateRawSync } = require('node:zlib');
 const { SaxesParser } = require('saxes');
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRY = 8 * 1024 * 1024;
+// Deflate options, the enhanced-deflate compatibility bit, data descriptors and UTF-8 names.
+// Encryption and every other general-purpose flag remain rejected.
+const ZIP_SUPPORTED_FLAGS = 0x081e;
+const IMAGE_MEDIA_TYPES = new Map([
+  ['image/jpeg', 'image/jpeg'],
+  ['image/jpg', 'image/jpeg'],
+  ['image/png', 'image/png'],
+  ['image/gif', 'image/gif'],
+  ['image/webp', 'image/webp'],
+]);
 function invalid(message) {
   const error = new Error(message);
   error.code = 'INVALID_EPUB';
@@ -82,13 +92,171 @@ function resource(base, href) {
   if (name === '..' || name.startsWith('../')) invalid('EPUB 资源路径越界。');
   return name;
 }
-function blocksFromDocument(document) {
+const IMAGE_MARKER = '￼';
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_BOOK_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_BOOK_IMAGE_REFERENCES = 4096;
+const MAX_CHAPTER_IMAGE_BYTES = 2 * 1024 * 1024;
+
+const MAX_IMAGE_DIMENSION = 16_384;
+const MAX_IMAGE_PIXELS = 40_000_000;
+function validImageDimensions(width, height) {
+  return (
+    width > 0 &&
+    height > 0 &&
+    width <= MAX_IMAGE_DIMENSION &&
+    height <= MAX_IMAGE_DIMENSION &&
+    width * height <= MAX_IMAGE_PIXELS
+  );
+}
+function jpegDimensions(bytes) {
+  let offset = 2;
+  while (offset + 4 <= bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+    if (offset + 2 > bytes.length) return null;
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) return null;
+    if (
+      [
+        0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce,
+        0xcf,
+      ].includes(marker)
+    ) {
+      if (length < 7) return null;
+      return {
+        width: bytes.readUInt16BE(offset + 5),
+        height: bytes.readUInt16BE(offset + 3),
+      };
+    }
+    offset += length;
+  }
+  return null;
+}
+function imageDimensions(bytes, type) {
+  if (
+    type === 'image/png' &&
+    bytes.length >= 24 &&
+    bytes.toString('ascii', 12, 16) === 'IHDR'
+  )
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  if (
+    type === 'image/gif' &&
+    bytes.length >= 10 &&
+    ['GIF87a', 'GIF89a'].includes(bytes.toString('ascii', 0, 6))
+  )
+    return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
+  if (
+    type === 'image/jpeg' &&
+    bytes.length >= 4 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8
+  )
+    return jpegDimensions(bytes);
+  if (
+    type === 'image/webp' &&
+    bytes.length >= 30 &&
+    bytes.toString('ascii', 0, 4) === 'RIFF' &&
+    bytes.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    const chunk = bytes.toString('ascii', 12, 16);
+    if (chunk === 'VP8X')
+      return {
+        width: 1 + bytes.readUIntLE(24, 3),
+        height: 1 + bytes.readUIntLE(27, 3),
+      };
+    if (chunk === 'VP8 ' && bytes.toString('hex', 23, 26) === '9d012a')
+      return {
+        width: bytes.readUInt16LE(26) & 0x3fff,
+        height: bytes.readUInt16LE(28) & 0x3fff,
+      };
+    if (chunk === 'VP8L' && bytes[20] === 0x2f)
+      return {
+        width: 1 + bytes[21] + ((bytes[22] & 0x3f) << 8),
+        height:
+          1 + (bytes[22] >> 6) + (bytes[23] << 2) + ((bytes[24] & 0x0f) << 10),
+      };
+  }
+  return null;
+}
+function detectedImageType(bytes) {
+  if (
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  )
+    return 'image/png';
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
+    return 'image/jpeg';
+  if (
+    bytes.length >= 6 &&
+    ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))
+  )
+    return 'image/gif';
+  if (
+    bytes.length >= 12 &&
+    bytes.toString('ascii', 0, 4) === 'RIFF' &&
+    bytes.toString('ascii', 8, 12) === 'WEBP'
+  )
+    return 'image/webp';
+  return null;
+}
+
+function imageDataUrl(bytes, expectedMediaType) {
+  const type = detectedImageType(bytes);
+  const dimensions = type && imageDimensions(bytes, type);
+  if (
+    !type ||
+    type !== expectedMediaType ||
+    bytes.length > MAX_IMAGE_BYTES ||
+    !dimensions ||
+    !validImageDimensions(dimensions.width, dimensions.height)
+  )
+    return null;
+  return `data:${type};base64,${bytes.toString('base64')}`;
+}
+
+function blocksFromDocument(
+  document,
+  documentPath,
+  resolveImage,
+  reserveImage,
+) {
   const blocks = [];
+  const images = [];
+  let imageBytes = 0;
   let current = '';
+  let currentImages = [];
   const flush = () => {
     const value = current.replace(/\s+/g, ' ').trim();
-    if (value) blocks.push(value);
+    if (value) {
+      const blockIndex = blocks.length;
+      blocks.push(value);
+      for (const image of currentImages) {
+        const offset = current
+          .slice(0, image.offset)
+          .replace(/\s+/g, ' ')
+          .trimStart().length;
+        const inline = image.inline;
+        images.push({
+          blockIndex,
+          offset,
+          assetId: image.assetId,
+          alt: image.alt,
+          inline,
+          size: image.size,
+        });
+      }
+    }
     current = '';
+    currentImages = [];
   };
   const omitted = new Set([
     'head',
@@ -113,16 +281,40 @@ function blocksFromDocument(document) {
     }
     if (omitted.has(node.name)) return;
     if (boundary.test(node.name)) flush();
-    if (node.name === 'img')
-      current += node.attrs.alt ? `[${node.attrs.alt}]` : '[图片]';
-    else node.children.forEach(walk);
+    if (node.name === 'img') {
+      const alt =
+        typeof node.attrs.alt === 'string' ? node.attrs.alt.slice(0, 512) : '';
+      let image = null;
+      try {
+        image = resolveImage(documentPath, node.attrs.src);
+      } catch {
+        // An unusable optional image must not make otherwise readable text fail.
+      }
+      if (
+        image &&
+        image.size <= MAX_CHAPTER_IMAGE_BYTES &&
+        imageBytes + image.size <= MAX_CHAPTER_IMAGE_BYTES &&
+        reserveImage(image.size)
+      ) {
+        imageBytes += image.size;
+        const classNames = String(node.attrs.class || '').split(/\s+/);
+        currentImages.push({
+          assetId: image.assetId,
+          size: image.size,
+          alt,
+          inline: classNames.includes('inline'),
+          offset: current.length,
+        });
+        current += IMAGE_MARKER;
+      } else current += alt ? `[${alt}]` : '[图片]';
+    } else node.children.forEach(walk);
     if (boundary.test(node.name)) flush();
   }
   const body = all(document, 'body')[0];
   if (!body) invalid('EPUB 缺少章节正文。');
   walk(body);
   flush();
-  return blocks.length ? blocks : [''];
+  return { blocks: blocks.length ? blocks : [''], images };
 }
 function parseEpub(buffer) {
   if (buffer.length > MAX_BYTES) invalid('EPUB 超过 32 MiB 大小限制。');
@@ -196,7 +388,7 @@ function parseEpub(buffer) {
       localOffset === 0xffffffff ||
       compressedSize === 0xffffffff ||
       size === 0xffffffff ||
-      flags & ~0x0808 ||
+      flags & ~ZIP_SUPPORTED_FLAGS ||
       flags & 0x0001 ||
       ![0, 8].includes(method) ||
       size > MAX_ENTRY ||
@@ -275,14 +467,106 @@ function parseEpub(buffer) {
   const opfName = resource('', rootfile);
   const opf = read(opfName);
   const manifest = new Map();
+  const manifestByPath = new Map();
   for (const item of all(all(opf, 'manifest')[0] || { children: [] }, 'item')) {
     if (!item.attrs.id || manifest.has(item.attrs.id))
       invalid('EPUB 清单标识无效。');
     manifest.set(item.attrs.id, item.attrs);
+    if (item.attrs.href) {
+      try {
+        manifestByPath.set(resource(opfName, item.attrs.href), item.attrs);
+      } catch {
+        // Unreferenced optional resources are ignored; a spine resource is checked below.
+      }
+    }
+  }
+  const assets = Object.create(null);
+  const assetByPath = new Map();
+  let totalImageBytes = 0;
+  let totalImageReferenceBytes = 0;
+  let totalImageReferences = 0;
+  const reserveImageReference = (size) => {
+    if (
+      totalImageReferences >= MAX_BOOK_IMAGE_REFERENCES ||
+      totalImageReferenceBytes + size > MAX_BOOK_IMAGE_BYTES
+    )
+      return false;
+    totalImageReferences++;
+    totalImageReferenceBytes += size;
+    return true;
+  };
+  const getImageAsset = (name, mediaType) => {
+    if (assetByPath.has(name)) return assetByPath.get(name);
+    const declaredType = IMAGE_MEDIA_TYPES.get(
+      typeof mediaType === 'string' ? mediaType.toLowerCase() : '',
+    );
+    const contents = files[name];
+    if (
+      !declaredType ||
+      !contents ||
+      contents.length > MAX_IMAGE_BYTES ||
+      totalImageBytes + contents.length > MAX_BOOK_IMAGE_BYTES
+    ) {
+      assetByPath.set(name, null);
+      return null;
+    }
+    const actualType = detectedImageType(contents);
+    if (actualType !== declaredType) {
+      assetByPath.set(name, null);
+      return null;
+    }
+    const dataUrl = imageDataUrl(contents, actualType);
+    if (!dataUrl) {
+      assetByPath.set(name, null);
+      return null;
+    }
+    const assetId = `image-${Object.keys(assets).length + 1}`;
+    assets[assetId] = { mediaType: actualType, bytes: contents, dataUrl };
+    totalImageBytes += contents.length;
+    assetByPath.set(name, assetId);
+    return assetId;
+  };
+  const resolveImage = (documentPath, href) => {
+    if (typeof href !== 'string') return null;
+    let name;
+    try {
+      name = resource(documentPath, href);
+    } catch {
+      return null;
+    }
+    const item = manifestByPath.get(name);
+    const assetId = item ? getImageAsset(name, item['media-type']) : null;
+    return assetId
+      ? {
+          assetId,
+          size: assets[assetId].bytes.length,
+        }
+      : null;
+  };
+  const coverMetadataId = all(opf, 'meta').find(
+    (item) => item.attrs.name?.toLowerCase() === 'cover',
+  )?.attrs.content;
+  const coverItem =
+    manifest.get(coverMetadataId) ||
+    [...manifest.values()].find((item) =>
+      (item.properties || '').split(/\s+/).includes('cover-image'),
+    );
+  let coverAssetId = null;
+  if (coverItem?.href) {
+    try {
+      coverAssetId = getImageAsset(
+        resource(opfName, coverItem.href),
+        coverItem['media-type'],
+      );
+    } catch {
+      // A bad or unsupported optional cover falls back to the generated cover.
+    }
   }
   const spine = all(all(opf, 'spine')[0] || { children: [] }, 'itemref');
   if (!spine.length || spine.length > 2048) invalid('EPUB 缺少有效阅读顺序。');
   const documents = new Map();
+  let returnedImageBytes = 0;
+  let returnedImageReferences = 0;
   const chapters = spine.map((ref, index) => {
     const item = manifest.get(ref.attrs.idref);
     if (
@@ -293,24 +577,70 @@ function parseEpub(buffer) {
     const href = resource(opfName, item.href);
     if (!documents.has(href)) {
       const document = read(href);
-      const blocks = blocksFromDocument(document);
+      const { blocks, images } = blocksFromDocument(
+        document,
+        href,
+        resolveImage,
+        reserveImageReference,
+      );
       documents.set(href, {
         blocks,
+        images,
         title: text(all(document, 'title')[0]).trim().slice(0, 512),
         text: blocks.join('\n\n'),
       });
     }
-    const { title, ...document } = documents.get(href);
+    const document = documents.get(href);
+    const imagesByBlock = new Map();
+    for (const image of document.images) {
+      const images = imagesByBlock.get(image.blockIndex) || [];
+      images.push(image);
+      imagesByBlock.set(image.blockIndex, images);
+    }
+    const chapterImages = [];
+    const blocks = document.blocks.map((block, blockIndex) => {
+      let cursor = 0;
+      let rendered = '';
+      for (const image of imagesByBlock.get(blockIndex) || []) {
+        if (
+          image.offset < cursor ||
+          image.offset >= block.length ||
+          block[image.offset] !== IMAGE_MARKER
+        )
+          continue;
+        rendered += block.slice(cursor, image.offset);
+        if (
+          returnedImageReferences < MAX_BOOK_IMAGE_REFERENCES &&
+          returnedImageBytes + image.size <= MAX_BOOK_IMAGE_BYTES
+        ) {
+          const offset = rendered.length;
+          rendered += IMAGE_MARKER;
+          const { assetId, ...reference } = image;
+          chapterImages.push({
+            ...reference,
+            offset,
+            src: assets[assetId].dataUrl,
+          });
+          returnedImageBytes += image.size;
+          returnedImageReferences++;
+        } else rendered += image.alt ? `[${image.alt}]` : '[图片]';
+        cursor = image.offset + 1;
+      }
+      return rendered + block.slice(cursor);
+    });
     return {
-      ...document,
       id: `chapter-${index + 1}`,
-      title: title || `第 ${index + 1} 章`,
+      title: document.title || `第 ${index + 1} 章`,
+      blocks,
+      images: chapterImages,
+      text: blocks.join('\n\n'),
     };
   });
   return {
     title: text(all(opf, 'title')[0]).trim().slice(0, 512) || '未命名书籍',
     author: text(all(opf, 'creator')[0]).trim().slice(0, 512) || '未知作者',
     chapters,
+    cover: coverAssetId ? assets[coverAssetId] : null,
     hasToc: [...manifest.values()].some(
       (item) =>
         /\bnav\b/.test(item.properties || '') ||
@@ -318,4 +648,10 @@ function parseEpub(buffer) {
     ),
   };
 }
-module.exports = { parseEpub, MAX_BYTES, MAX_ENTRY };
+module.exports = {
+  parseEpub,
+  imageDataUrl,
+  MAX_BYTES,
+  MAX_ENTRY,
+  MAX_IMAGE_BYTES,
+};

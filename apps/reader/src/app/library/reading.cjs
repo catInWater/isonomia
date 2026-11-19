@@ -232,6 +232,9 @@ class ReadingManager {
         id: chapter.id,
         title: chapter.title,
         blocks: [...chapter.blocks],
+        images: (chapter.images || []).map(({ size: _size, ...image }) => ({
+          ...image,
+        })),
       };
     });
   }
@@ -247,6 +250,11 @@ class ReadingManager {
       const current = await this.store.load(id);
       if (current && current.data.contentHash !== book.contentHash)
         fail('CONTENT_CHANGED', '阅读记录的内容版本不匹配。');
+      const lastReadAt = book.lastReadAt || '';
+      const lastReadTime = Date.parse(lastReadAt);
+      const shouldTouch =
+        !Number.isFinite(lastReadTime) || Date.now() - lastReadTime >= 60_000;
+      const savedAt = shouldTouch ? await this._touch(book.bookId) : lastReadAt;
       await this.store.save(
         id,
         {
@@ -256,7 +264,7 @@ class ReadingManager {
         },
         current?.revision ?? 0,
       );
-      return { lastReadAt: book.lastReadAt || new Date().toISOString() };
+      return { lastReadAt: savedAt || new Date().toISOString() };
     });
   }
 }

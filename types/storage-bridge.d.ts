@@ -34,6 +34,7 @@ export interface StorageBridge {
   listRecovery(id: string): Promise<RecoveryCandidate[]>;
   recover(id: string, selection: RecoverySelection): Promise<RecordValue>;
   libraryList(): Promise<BookSummary[]>;
+  libraryCover(bookId: string): Promise<string | null>;
   libraryImport(): Promise<Array<BookSummary | ImportFailure>>;
   libraryRemove(bookId: string, keepNotes: boolean): Promise<BookSummary>;
   libraryOpen(
@@ -56,6 +57,7 @@ export interface BookSummary {
   importedAt: string;
   lastReadAt: string | null;
   chapters: { id: string; title: string }[];
+  coverMimeType?: string | null;
   encoding: string | null;
 }
 export interface ReadingPosition {
@@ -76,6 +78,13 @@ export interface ReaderChapter {
   id: string;
   title: string;
   blocks: string[];
+  images?: {
+    blockIndex: number;
+    offset: number;
+    src: string;
+    alt: string;
+    inline?: boolean;
+  }[];
 }
 export interface OpenedBook {
   book: BookSummary;
