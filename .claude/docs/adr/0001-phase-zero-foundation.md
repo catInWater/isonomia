@@ -39,4 +39,4 @@ Reader 是本地优先 Electron 应用。书籍输入不可信，用户内容需
 - `NX_DAEMON=false npm exec -- nx run reader:spec-check`
 - `git diff --check`
 
-未完成：Windows CI/安装启动退出卸载、分支保护实际生效、生产性能基线、产品导入/阅读验收、完整依赖升级。2026-11-18 本地 `npm audit` 曾报告 89 high、2 critical、20 moderate；升级与发布前复审为阻塞项。
+未完成：Windows 安装器 CI 已构建，但实际安装启动退出卸载、分支保护生效、生产性能基线、产品导入/阅读验收、完整依赖升级仍待验证。曾发布的 `reader-windows-x64-unsigned` artifact 使用递归 `**/*.exe`，包含 `win-unpacked/Reader.exe`；该 exe 不可从其运行目录拆出单独执行，Electron 需要相邻 `icudtl.dat` 与 `resources`。CI 现仅发布根级 NSIS 安装器并验证恰好一个匹配项，以防重复交付裸 exe。Windows 安装器启动日志尚未由 CI 自动冒烟覆盖。2026-11-18 本地 `npm audit` 曾报告 89 high、2 critical、20 moderate；升级与发布前复审为阻塞项。

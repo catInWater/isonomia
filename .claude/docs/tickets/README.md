@@ -22,7 +22,7 @@
 
 ### T-002 CI 与 Windows 安装包 · P0
 
-- 状态：进行中（CI 和 Windows unsigned installer build 已配置，未在本执行中跑通 Windows；分支保护及安装冒烟未验证）。
+- 状态：进行中（Windows CI 已生成未签名安装程序；修复 artifact 曾附带的 win-unpacked 裸 EXE；实际安装、启动、卸载和分支保护仍待验证）。
 - 依赖：无；测试入口由 T-003 补齐。需求：NFR-13/20/22。规格：[S00-A1～A3](../specs/00-engineering.md)。
 - 工作：npm ci、Nx 检查/测试/build、格式、Windows 安装包；审计旧依赖风险；保存验证记录。
 - 验收：CI 正常/故障注入分别绿/红；在目标 Windows 实际安装、启动、退出、卸载并确认用户资料保留；由仓库管理员验证必需检查保护。上述均未由“存在 workflow”自动证明；默认不发布。
