@@ -16,6 +16,11 @@ class LibraryError extends Error {
 function fail(code, message, cause) {
   throw new LibraryError(code, message, cause);
 }
+function comparablePath(value) {
+  if (process.platform !== 'win32') return value;
+  const normalized = value.startsWith('\\\\?\\') ? value.slice(4) : value;
+  return normalized.toLowerCase();
+}
 function decodeTxt(buffer) {
   if (
     buffer.length >= 3 &&
@@ -163,6 +168,14 @@ class LibraryManager {
     );
     if (path.dirname(bookPath) !== booksDirectory)
       fail('INVALID_BOOK', '书籍文件路径无效，未执行删除。');
+    const realBooksDirectory = await fs
+      .realpath(booksDirectory)
+      .catch(() => '');
+    if (
+      realBooksDirectory &&
+      comparablePath(realBooksDirectory) !== comparablePath(booksDirectory)
+    )
+      fail('INVALID_BOOK', '书籍目录路径无效，未执行删除。');
     const books = keepNotes
       ? [...catalog.data.books]
       : catalog.data.books.filter((item) => item.bookId !== bookId);
