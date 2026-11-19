@@ -56,7 +56,14 @@ test('S01-A3/A4 imports a private copy and records removal without touching sour
 test('deleting book and user content removes its saved reading record', async (t) => {
   const { manager } = await setup(t);
   const book = await manager.importFile(fixture('chinese-utf8.txt'));
-  await manager.store.save(`reading-${book.bookId}`, { books: [], position: { chapterId: 'chapter-1', blockIndex: 0, offset: 0 } }, 0);
+  await manager.store.save(
+    `reading-${book.bookId}`,
+    {
+      books: [],
+      position: { chapterId: 'chapter-1', blockIndex: 0, offset: 0 },
+    },
+    0,
+  );
   await manager.remove(book.bookId, false);
   assert.equal(await manager.store.load(`reading-${book.bookId}`), null);
 });
@@ -68,7 +75,9 @@ test('remove refuses a compromised catalog file name before touching outside fil
   const catalog = await manager.store.load('library');
   catalog.data.books[0].fileName = '../outside.txt';
   await manager.store.save('library', catalog.data, catalog.revision);
-  await assert.rejects(manager.remove(book.bookId, false), { code: 'INVALID_BOOK' });
+  await assert.rejects(manager.remove(book.bookId, false), {
+    code: 'INVALID_BOOK',
+  });
   assert.equal(await fs.readFile(outside, 'utf8'), 'keep');
 });
 test('S01-A5 rejects duplicate content', async (t) => {

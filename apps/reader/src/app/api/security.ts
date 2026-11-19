@@ -30,7 +30,9 @@ export function rendererDocument(directory: string, port?: number): string {
 export function validateRequest(method: string, args: unknown[]): void {
   const valid =
     (['openBook', 'readChapter', 'saveReading'].includes(method) &&
-      args.length === 1 && validJson(args[0]) && withinJsonLimit(args[0]) &&
+      args.length === 1 &&
+      validJson(args[0]) &&
+      withinJsonLimit(args[0]) &&
       validReadingRequest(method, args[0])) ||
     ((method === 'version' ||
       method === 'storageStatus' ||

@@ -38,18 +38,27 @@ export default class ElectronEvents {
         validateRequest(method, args);
         if (['openBook', 'readChapter', 'saveReading'].includes(method)) {
           if (!App.reading) throw new Error('本地阅读数据暂不可用。');
-          if (method === 'openBook') return App.reading.openBook(args[0] as { bookId: string });
-          if (method === 'readChapter') return App.reading.readChapter(args[0] as { bookId: string; chapterId: string });
-          return App.reading.saveReading(args[0] as import('@reader/storage-bridge').SaveReadingRequest);
+          if (method === 'openBook')
+            return App.reading.openBook(args[0] as { bookId: string });
+          if (method === 'readChapter')
+            return App.reading.readChapter(
+              args[0] as { bookId: string; chapterId: string },
+            );
+          return App.reading.saveReading(
+            args[0] as import('@reader/storage-bridge').SaveReadingRequest,
+          );
         }
         if (method === 'libraryOpen') {
           if (!App.reading) throw new Error('本地阅读数据暂不可用。');
           // Compatibility for Phase 1 clients, always derived from the safe adapter.
-          const { book } = await App.reading.openBook({ bookId: args[0] as string });
+          const { book } = await App.reading.openBook({
+            bookId: args[0] as string,
+          });
           return { book, content: null };
         }
         if (method === 'version') return app.getVersion();
-        if (method === 'libraryList') return ((await App.library?.list()) ?? []).map(publicBook);
+        if (method === 'libraryList')
+          return ((await App.library?.list()) ?? []).map(publicBook);
         if (method === 'libraryImport') {
           const result = await dialog.showOpenDialog(App.mainWindow!, {
             title: '导入书籍',
@@ -89,10 +98,9 @@ export default class ElectronEvents {
           return imported;
         }
         if (method === 'libraryRemove')
-          return publicBook(await App.library!.remove(
-            args[0] as string,
-            args[1] as boolean,
-          ));
+          return publicBook(
+            await App.library!.remove(args[0] as string, args[1] as boolean),
+          );
         if (method === 'storageStatus') {
           if (!App.store) {
             return {

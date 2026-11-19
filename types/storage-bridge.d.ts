@@ -40,7 +40,10 @@ export interface StorageBridge {
     bookId: string,
   ): Promise<{ book: BookSummary; content: string | null }>;
   openBook(request: { bookId: string }): Promise<OpenedBook>;
-  readChapter(request: { bookId: string; chapterId: string }): Promise<ReaderChapter>;
+  readChapter(request: {
+    bookId: string;
+    chapterId: string;
+  }): Promise<ReaderChapter>;
   saveReading(request: SaveReadingRequest): Promise<{ lastReadAt: string }>;
 }
 export interface BookSummary {
@@ -69,7 +72,11 @@ export interface ReadingPreferences {
   fontFamily: 'default' | 'serif' | 'sans-serif' | 'monospace';
   theme: 'light' | 'dark' | 'sepia';
 }
-export interface ReaderChapter { id: string; title: string; blocks: string[] }
+export interface ReaderChapter {
+  id: string;
+  title: string;
+  blocks: string[];
+}
 export interface OpenedBook {
   book: BookSummary;
   position: ReadingPosition;

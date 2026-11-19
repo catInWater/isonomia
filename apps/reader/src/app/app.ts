@@ -82,7 +82,11 @@ export default class App {
       });
       App.libraryRoot = root;
       App.library = new LibraryManager({ root, store: App.store });
-      App.reading = new ReadingManager({ root, store: App.store, library: App.library });
+      App.reading = new ReadingManager({
+        root,
+        store: App.store,
+        library: App.library,
+      });
       App.storageAvailable = true;
     } catch (error) {
       App.storageAvailable = false;

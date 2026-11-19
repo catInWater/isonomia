@@ -5,7 +5,11 @@ import type {
   Json,
   RecordValue,
 } from '../storage/index.cjs';
-import type { RecoveryStatus, StorageBridge, SaveReadingRequest } from '@reader/storage-bridge';
+import type {
+  RecoveryStatus,
+  StorageBridge,
+  SaveReadingRequest,
+} from '@reader/storage-bridge';
 
 contextBridge.exposeInMainWorld(
   'reader',
@@ -31,8 +35,11 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.invoke('reader:libraryRemove', bookId, keepNotes),
     libraryOpen: (bookId: string) =>
       ipcRenderer.invoke('reader:libraryOpen', bookId),
-    openBook: (request: { bookId: string }) => ipcRenderer.invoke('reader:openBook', request),
-    readChapter: (request: { bookId: string; chapterId: string }) => ipcRenderer.invoke('reader:readChapter', request),
-    saveReading: (request: SaveReadingRequest) => ipcRenderer.invoke('reader:saveReading', request),
+    openBook: (request: { bookId: string }) =>
+      ipcRenderer.invoke('reader:openBook', request),
+    readChapter: (request: { bookId: string; chapterId: string }) =>
+      ipcRenderer.invoke('reader:readChapter', request),
+    saveReading: (request: SaveReadingRequest) =>
+      ipcRenderer.invoke('reader:saveReading', request),
   } satisfies StorageBridge),
 );

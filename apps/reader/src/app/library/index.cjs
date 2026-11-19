@@ -37,7 +37,8 @@ function decodeTxt(buffer) {
   fail('UNKNOWN_ENCODING', '无法确定文本编码，请转换为 UTF-8 后重试。');
 }
 function parseTxt(buffer) {
-  if (buffer.length > MAX_BYTES) fail('CONTENT_LIMIT', 'TXT 超过 32 MiB 大小限制。');
+  if (buffer.length > MAX_BYTES)
+    fail('CONTENT_LIMIT', 'TXT 超过 32 MiB 大小限制。');
   const { text, encoding } = decodeTxt(buffer);
   const chapters = [];
   const heading =
@@ -56,9 +57,23 @@ function parseTxt(buffer) {
   }
   if (current.text.trim() || !chapters.length)
     chapters.push({ ...current, text: current.text.trim() });
-  return { title: '', author: '', chapters: chapters.map((chapter) => ({
-    ...chapter, blocks: chapter.text.split(/\n+/).map((line) => line.trim()).filter(Boolean),
-  })).map((chapter) => ({ ...chapter, blocks: chapter.blocks.length ? chapter.blocks : [''] })), encoding };
+  return {
+    title: '',
+    author: '',
+    chapters: chapters
+      .map((chapter) => ({
+        ...chapter,
+        blocks: chapter.text
+          .split(/\n+/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      }))
+      .map((chapter) => ({
+        ...chapter,
+        blocks: chapter.blocks.length ? chapter.blocks : [''],
+      })),
+    encoding,
+  };
 }
 class LibraryManager {
   constructor({ root, store }) {
@@ -84,12 +99,14 @@ class LibraryManager {
       .stat(source)
       .catch((error) => fail('IMPORT_FAILED', '找不到要导入的文件。', error));
     if (!stat.isFile()) fail('IMPORT_FAILED', '导入目标不是文件。');
-    if (stat.size > MAX_BYTES) fail('CONTENT_LIMIT', '书籍超过 32 MiB 大小限制。');
+    if (stat.size > MAX_BYTES)
+      fail('CONTENT_LIMIT', '书籍超过 32 MiB 大小限制。');
     const extension = path.extname(source).toLowerCase();
     if (!['.epub', '.txt'].includes(extension))
       fail('UNSUPPORTED_FORMAT', '仅支持 EPUB 和 TXT 文件。');
     const bytes = await fs.readFile(source);
-    const parsed = extension === '.epub' ? safeParseEpub(bytes) : parseTxt(bytes);
+    const parsed =
+      extension === '.epub' ? safeParseEpub(bytes) : parseTxt(bytes);
     const catalog = await this._catalog();
     const hash = createHash('sha256').update(bytes).digest('hex');
     const duplicate = catalog.data.books.find(
@@ -133,14 +150,33 @@ class LibraryManager {
     );
     if (index < 0) fail('NOT_FOUND', '找不到这本书。');
     const book = catalog.data.books[index];
-    if (!/^book-[a-z0-9]{32}$/.test(book.bookId) || !['epub', 'txt'].includes(book.format) || book.fileName !== `${book.bookId}.${book.format}`)
+    if (
+      !/^book-[a-z0-9]{32}$/.test(book.bookId) ||
+      !['epub', 'txt'].includes(book.format) ||
+      book.fileName !== `${book.bookId}.${book.format}`
+    )
       fail('INVALID_BOOK', '书籍文件记录无效，未执行删除。');
     const booksDirectory = path.resolve(this.root, 'books');
-    const bookPath = path.resolve(booksDirectory, `${book.bookId}.${book.format}`);
+    const bookPath = path.resolve(
+      booksDirectory,
+      `${book.bookId}.${book.format}`,
+    );
     if (path.dirname(bookPath) !== booksDirectory)
       fail('INVALID_BOOK', '书籍文件路径无效，未执行删除。');
-    const realBooksDirectory = await fs.realpath(booksDirectory).catch(() => '');
-    if (realBooksDirectory && realBooksDirectory !== booksDirectory)
+    const realBooksDirectory = await fs
+      .realpath(booksDirectory)
+      .catch(() => '');
+    const comparableBooksDirectory =
+      process.platform === 'win32' && realBooksDirectory.startsWith('\\\\?\\')
+        ? realBooksDirectory.slice(4)
+        : realBooksDirectory;
+    if (
+      realBooksDirectory &&
+      (process.platform === 'win32'
+        ? comparableBooksDirectory.toLowerCase() !==
+          booksDirectory.toLowerCase()
+        : realBooksDirectory !== booksDirectory)
+    )
       fail('INVALID_BOOK', '书籍目录路径无效，未执行删除。');
     const books = keepNotes
       ? [...catalog.data.books]
