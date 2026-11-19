@@ -5,13 +5,21 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { DurableStore } = require('../../apps/reader/src/app/storage/index.cjs');
-const { LibraryManager, parseEpub, parseTxt } = require('../../apps/reader/src/app/library/index.cjs');
+const {
+  LibraryManager,
+  parseEpub,
+  parseTxt,
+} = require('../../apps/reader/src/app/library/index.cjs');
 const fixture = (name) => path.join(__dirname, '..', 'fixtures', name);
 const schema = { 1: (data) => data && Array.isArray(data.books) };
 async function setup(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'reader-library-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const store = new DurableStore({ root: path.join(root, 'data'), schemaVersion: 1, schemas: schema });
+  const store = new DurableStore({
+    root: path.join(root, 'data'),
+    schemaVersion: 1,
+    schemas: schema,
+  });
   return { root, manager: new LibraryManager({ root, store }) };
 }
 test('S01-A1 parses EPUB metadata and chapters', async () => {
@@ -21,7 +29,11 @@ test('S01-A1 parses EPUB metadata and chapters', async () => {
   assert.ok(parsed.chapters.length >= 1);
 });
 test('S01-A2 decodes UTF-8, BOM, and GBK TXT fixtures', async () => {
-  for (const name of ['chinese-utf8.txt', 'chinese-bom.txt', 'chinese-gbk.txt']) {
+  for (const name of [
+    'chinese-utf8.txt',
+    'chinese-bom.txt',
+    'chinese-gbk.txt',
+  ]) {
     const parsed = parseTxt(await fs.readFile(fixture(name)));
     assert.ok(parsed.chapters[0].text.length > 0);
   }
@@ -44,5 +56,7 @@ test('S01-A3/A4 imports a private copy and records removal without touching sour
 test('S01-A5 rejects duplicate content', async (t) => {
   const { manager } = await setup(t);
   await manager.importFile(fixture('chinese-utf8.txt'));
-  await assert.rejects(manager.importFile(fixture('chinese-utf8.txt')), { code: 'DUPLICATE' });
+  await assert.rejects(manager.importFile(fixture('chinese-utf8.txt')), {
+    code: 'DUPLICATE',
+  });
 });

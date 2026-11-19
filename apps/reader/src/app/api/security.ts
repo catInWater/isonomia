@@ -37,9 +37,7 @@ export function validateRequest(method: string, args: unknown[]): void {
       args.length === 2 &&
       validBookId(args[0]) &&
       typeof args[1] === 'boolean') ||
-    (method === 'libraryOpen' &&
-      args.length === 1 &&
-      validBookId(args[0])) ||
+    (method === 'libraryOpen' && args.length === 1 && validBookId(args[0])) ||
     (method === 'load' && args.length === 1 && validRecordId(args[0])) ||
     (method === 'save' &&
       args.length === 3 &&

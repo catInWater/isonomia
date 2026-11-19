@@ -36,7 +36,9 @@ export interface StorageBridge {
   libraryList(): Promise<BookSummary[]>;
   libraryImport(): Promise<Array<BookSummary | ImportFailure>>;
   libraryRemove(bookId: string, keepNotes: boolean): Promise<BookSummary>;
-  libraryOpen(bookId: string): Promise<{ book: BookSummary; content: string | null }>;
+  libraryOpen(
+    bookId: string,
+  ): Promise<{ book: BookSummary; content: string | null }>;
 }
 export interface BookSummary {
   bookId: string;
@@ -49,4 +51,7 @@ export interface BookSummary {
   chapters: { id: string; title: string }[];
   encoding: string | null;
 }
-export interface ImportFailure { error: string; fileName: string; }
+export interface ImportFailure {
+  error: string;
+  fileName: string;
+}
