@@ -1,134 +1,40 @@
-import { useEffect, useState } from 'react';
-import { Link, Route, Routes } from 'react-router-dom';
-import type { StorageBridge } from '@reader/storage-bridge';
+import { useEffect, useMemo, useState } from 'react';
+import styles from './app.module.css';
 
-declare global {
-  interface Window {
-    reader?: StorageBridge;
-  }
-}
+type Book = {
+  bookId: string; title: string; author: string; format: 'epub' | 'txt';
+  importedAt: string; lastReadAt: string | null; fileStatus: 'available' | 'removed';
+  chapters: { id: string; title: string }[]; encoding: string | null;
+};
+type ImportResult = Book | { error: string; fileName: string };
+
+declare global { interface Window { reader: { libraryList(): Promise<Book[]>; libraryImport(): Promise<ImportResult[]>; libraryRemove(id: string, keepNotes: boolean): Promise<Book>; }; } }
+
+type Sort = 'title' | 'author' | 'recent' | 'imported';
 
 export function App() {
-  const [status, setStatus] = useState('正在检查本地数据目录…');
-  const [recovery, setRecovery] = useState<
-    Awaited<ReturnType<StorageBridge['getStorageStatus']>>['recovery']
-  >([]);
-  useEffect(() => {
-    if (!window.reader) {
-      setStatus('浏览器预览：请在桌面应用中使用本地存储。');
-      return;
-    }
-    let active = true;
-    window.reader.getStorageStatus().then(
-      (result) => {
-        if (active) {
-          setStatus(result.message);
-          setRecovery(
-            result.recovery.filter((entry) => entry.valid && entry.checksum),
-          );
-        }
-      },
-      () => {
-        if (active) setStatus('无法读取存储状态。请重启应用后重试。');
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, []);
-  return (
-    <main>
-      <h1>Reader · 静读</h1>
-      <nav aria-label="主导航">
-        <Link to="/">书架</Link> · <Link to="/about">关于</Link>
-      </nav>
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <>
-              <h2>书架为空</h2>
-              <p>工程基础已就绪。图书导入将在下一阶段提供。</p>
-              <p role="status">{status}</p>
-              {recovery.length > 0 && (
-                <section aria-labelledby="recovery-heading">
-                  <h2 id="recovery-heading">恢复数据</h2>
-                  <p>
-                    数据未被覆盖。选择已验证的版本以从副本恢复；所有原始文件将保留。
-                  </p>
-                  <ul>
-                    {recovery.map((candidate) => (
-                      <li key={`${candidate.name}-${candidate.checksum}`}>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (
-                              !window.reader ||
-                              !candidate.checksum ||
-                              !window.confirm(
-                                '从选定版本恢复？现有文件会保留。',
-                              )
-                            )
-                              return;
-                            try {
-                              const latest = (
-                                await window.reader.getStorageStatus()
-                              ).expectedRevision;
-                              const result = await window.reader.recover(
-                                'settings',
-                                {
-                                  name: candidate.name,
-                                  checksum: candidate.checksum,
-                                  expectedRevision: latest,
-                                },
-                              );
-                              if (!result) throw new Error('恢复未完成');
-                              const refreshed =
-                                await window.reader.getStorageStatus();
-                              setStatus(refreshed.message);
-                              setRecovery(
-                                refreshed.recovery.filter(
-                                  (entry) => entry.valid && entry.checksum,
-                                ),
-                              );
-                            } catch {
-                              setStatus(
-                                '恢复失败或数据已变化。原文件已保留；请重新启动并重新检查恢复点。',
-                              );
-                            }
-                          }}
-                        >
-                          从已验证副本恢复（版本 {candidate.revision}）
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </>
-          }
-        />
-        <Route
-          path="/about"
-          element={
-            <>
-              <h2>关于 Reader</h2>
-              <p>离线阅读与笔记。默认不联网，无遥测与自动更新。</p>
-              <p>当前为阶段 0 工程版本。</p>
-            </>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            <p>
-              页面不存在。<Link to="/">返回书架</Link>
-            </p>
-          }
-        />
-      </Routes>
-    </main>
-  );
+  const [books, setBooks] = useState<Book[]>([]);
+  const [sort, setSort] = useState<Sort>('recent');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [removing, setRemoving] = useState<Book | null>(null);
+  const refresh = async () => setBooks(await window.reader.libraryList());
+  useEffect(() => { void refresh(); }, []);
+  const sorted = useMemo(() => [...books].sort((a, b) => {
+    if (sort === 'title') return a.title.localeCompare(b.title, 'zh-CN');
+    if (sort === 'author') return a.author.localeCompare(b.author, 'zh-CN');
+    if (sort === 'imported') return b.importedAt.localeCompare(a.importedAt);
+    return (b.lastReadAt || b.importedAt).localeCompare(a.lastReadAt || a.importedAt);
+  }), [books, sort]);
+  const importBooks = async () => { setBusy(true); setMessage(''); try { const results = await window.reader.libraryImport(); const failures = results.filter((item): item is { error: string; fileName: string } => 'error' in item); if (failures.length) setMessage(failures.map((item) => `${item.fileName}：${item.error}`).join('；')); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : '导入失败。'); } finally { setBusy(false); } };
+  const removeBook = async (book: Book, keepNotes: boolean) => { try { await window.reader.libraryRemove(book.bookId, keepNotes); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : '删除失败。'); } finally { setRemoving(null); } };
+  return <main className={styles.shell}>
+    <header className={styles.header}><div><p className={styles.eyebrow}>本地阅读器</p><h1>书架</h1><p className={styles.muted}>{books.length ? `${books.length} 本书` : '导入一本书，开始阅读。'}</p></div><button className={styles.primary} onClick={() => void importBooks()} disabled={busy}>{busy ? '导入中…' : '导入书籍'}</button></header>
+    <section className={styles.toolbar} aria-label="书架工具"><label>排序 <select value={sort} onChange={(event) => setSort(event.target.value as Sort)}><option value="recent">最近阅读</option><option value="imported">导入时间</option><option value="title">书名</option><option value="author">作者</option></select></label><div className={styles.viewSwitch}><button aria-pressed={view === 'grid'} onClick={() => setView('grid')}>封面</button><button aria-pressed={view === 'list'} onClick={() => setView('list')}>列表</button></div></section>
+    {message && <p className={styles.notice} role="alert">{message}</p>}
+    {removing && <div className={styles.backdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRemoving(null); }}><section className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="remove-title"><h2 id="remove-title">删除“{removing.title}”</h2><p>书籍文件将从应用数据目录移除。外部原始文件不会被删除。</p><button className={styles.primary} onClick={() => void removeBook(removing, true)}>仅移除书文件，保留笔记</button><button className={styles.danger} onClick={() => void removeBook(removing, false)}>删除书籍及用户内容</button><button className={styles.cancel} onClick={() => setRemoving(null)}>取消</button></section></div>}
+    {!sorted.length ? <section className={styles.empty}><div className={styles.emptyMark}>+</div><h2>书架还是空的</h2><p>支持 EPUB 和 UTF-8、GBK 编码的 TXT 文件。</p><button className={styles.primary} onClick={() => void importBooks()}>选择文件</button></section> : <section className={view === 'grid' ? styles.grid : styles.list}>{sorted.map((book) => <article className={styles.book} key={book.bookId}><div className={styles.cover}><span>{book.format.toUpperCase()}</span></div><div className={styles.bookInfo}><h2>{book.title}</h2><p>{book.author}</p><small>{book.chapters.length ? `${book.chapters.length} 个章节` : '整本阅读'}</small></div><button className={styles.remove} title="删除书籍" onClick={() => setRemoving(book)}>删除</button></article>)}</section>}
+  </main>;
 }
-
 export default App;

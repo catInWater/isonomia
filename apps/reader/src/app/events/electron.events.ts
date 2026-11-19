@@ -1,4 +1,6 @@
-import { app, ipcMain } from 'electron';
+import { app, dialog, ipcMain } from 'electron';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import App from '../app';
 import { isTrustedSender, validateRequest } from '../api/security';
 
@@ -11,6 +13,10 @@ export default class ElectronEvents {
       'save',
       'listRecovery',
       'recover',
+      'libraryList',
+      'libraryImport',
+      'libraryRemove',
+      'libraryOpen',
     ]) {
       ipcMain.handle(`reader:${method}`, async (event, ...args: unknown[]) => {
         if (
@@ -25,6 +31,34 @@ export default class ElectronEvents {
         }
         validateRequest(method, args);
         if (method === 'version') return app.getVersion();
+        if (method === 'libraryList') return await App.library?.list() ?? [];
+        if (method === 'libraryImport') {
+          const result = await dialog.showOpenDialog(App.mainWindow!, {
+            title: '导入书籍', properties: ['openFile', 'multiSelections'],
+            filters: [{ name: '书籍', extensions: ['epub', 'txt'] }],
+          });
+          if (result.canceled) return [];
+          const imported = [];
+          for (const file of result.filePaths) {
+            try { imported.push(await App.library?.importFile(file)); }
+            catch (error) {
+              if ((error as { code?: string }).code === 'DUPLICATE') {
+                const choice = await dialog.showMessageBox(App.mainWindow!, { type: 'question', title: '检测到重复书籍', message: error instanceof Error ? error.message : '这本书已经存在。', detail: '是否仍保留为独立副本？', buttons: ['跳过', '保留副本'], defaultId: 0, cancelId: 0 });
+                if (choice.response === 1) { imported.push(await App.library?.importFile(file, true)); continue; }
+              }
+              imported.push({ error: error instanceof Error ? error.message : '导入失败。', fileName: file.split(/[\\/]/).at(-1) });
+            }
+          }
+          return imported;
+        }
+        if (method === 'libraryRemove') return await App.library!.remove(args[0] as string, args[1] as boolean);
+        if (method === 'libraryOpen') {
+          const book = (await App.library!.list()).find((item) => item.bookId === args[0]);
+          if (!book || book.fileStatus !== 'available') throw new Error('书籍文件不可用。');
+          const filePath = join(App.libraryRoot, 'books', book.fileName);
+          const bytes = await readFile(filePath);
+          return { book, content: book.format === 'txt' ? bytes.toString('utf8') : null };
+        }
         if (method === 'storageStatus') {
           if (!App.store) {
             return {

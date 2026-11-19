@@ -25,5 +25,11 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.invoke('reader:listRecovery', id),
     recover: (id: string, selection: RecoverySelection): Promise<RecordValue> =>
       ipcRenderer.invoke('reader:recover', id, selection),
+    libraryList: () => ipcRenderer.invoke('reader:libraryList'),
+    libraryImport: () => ipcRenderer.invoke('reader:libraryImport'),
+    libraryRemove: (bookId: string, keepNotes: boolean) =>
+      ipcRenderer.invoke('reader:libraryRemove', bookId, keepNotes),
+    libraryOpen: (bookId: string) =>
+      ipcRenderer.invoke('reader:libraryOpen', bookId),
   } satisfies StorageBridge),
 );

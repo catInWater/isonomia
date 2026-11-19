@@ -21,6 +21,11 @@
             "input": "apps/reader/src/app/storage",
             "glob": "*.cjs",
             "output": "storage"
+          },
+          {
+            "input": "apps/reader/src/app/library",
+            "glob": "*.cjs",
+            "output": "library"
           }
         ]
       },

@@ -33,4 +33,20 @@ export interface StorageBridge {
   save(id: string, data: Json, expectedRevision: number): Promise<RecordValue>;
   listRecovery(id: string): Promise<RecoveryCandidate[]>;
   recover(id: string, selection: RecoverySelection): Promise<RecordValue>;
+  libraryList(): Promise<BookSummary[]>;
+  libraryImport(): Promise<Array<BookSummary | ImportFailure>>;
+  libraryRemove(bookId: string, keepNotes: boolean): Promise<BookSummary>;
+  libraryOpen(bookId: string): Promise<{ book: BookSummary; content: string | null }>;
 }
+export interface BookSummary {
+  bookId: string;
+  title: string;
+  author: string;
+  format: 'epub' | 'txt';
+  fileStatus: 'available' | 'removed';
+  importedAt: string;
+  lastReadAt: string | null;
+  chapters: { id: string; title: string }[];
+  encoding: string | null;
+}
+export interface ImportFailure { error: string; fileName: string; }
