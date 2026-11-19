@@ -23,6 +23,9 @@ test('S00-A6 IPC rejects subframes, external origins and unexpected arguments', 
     assert.throws(() => validateRequest(method, []));
   }
   assert.throws(() => validateRequest('version', ['../../private']));
+  assert.throws(() =>
+    validateRequest('load', ['reading-book-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']),
+  );
 });
 test('S00-A6 production allows only bundled assets and blocks remote/local escapes', () => {
   assert.equal(allowRequest('file:///opt/reader-ui/main.js', document), true);

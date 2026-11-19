@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { validReadingRequest } from '../library/reading.cjs';
 
 /** Only the shell's own top-level document may invoke privileged methods. */
 export function isTrustedSender(
@@ -28,6 +29,11 @@ export function rendererDocument(directory: string, port?: number): string {
 /** No renderer supplied file paths, URLs, commands or raw IPC channels. */
 export function validateRequest(method: string, args: unknown[]): void {
   const valid =
+    (['openBook', 'readChapter', 'saveReading'].includes(method) &&
+      args.length === 1 &&
+      validJson(args[0]) &&
+      withinJsonLimit(args[0]) &&
+      validReadingRequest(method, args[0])) ||
     ((method === 'version' ||
       method === 'storageStatus' ||
       method === 'libraryList' ||
@@ -63,7 +69,7 @@ export function validBookId(value: unknown): value is string {
 export function validRecordId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    /^(?:book|note)-[a-z0-9_-]{1,74}$|^settings$|^library$/.test(value)
+    /^(?:book|note)-[a-z0-9_-]{1,74}$|^settings$/.test(value)
   );
 }
 

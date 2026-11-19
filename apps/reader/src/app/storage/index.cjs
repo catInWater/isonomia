@@ -326,6 +326,14 @@ class DurableStore {
       return JSON.parse(text);
     });
   }
+  remove(id) {
+    return this._queue(id, async () => {
+      const directory = path.join(this.root, id);
+      if (path.dirname(path.resolve(directory)) !== path.resolve(this.root))
+        fail('UNSAFE_PATH', 'Storage record path is invalid.');
+      await fs.rm(directory, { recursive: true, force: true });
+    });
+  }
   migrate(id) {
     return this._queue(id, async () => {
       const directory = await this._directory(id);

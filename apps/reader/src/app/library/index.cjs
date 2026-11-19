@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const iconv = require('iconv-lite');
-const { unzipSync, strFromU8 } = require('fflate');
+const { parseEpub: safeParseEpub, MAX_BYTES } = require('./content.cjs');
 
 class LibraryError extends Error {
   constructor(code, message, cause) {
@@ -16,71 +16,10 @@ class LibraryError extends Error {
 function fail(code, message, cause) {
   throw new LibraryError(code, message, cause);
 }
-function cleanText(value) {
-  return value
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-function xmlValue(xml, tag) {
-  const match = xml.match(
-    new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, 'i'),
-  );
-  return match ? cleanText(match[1]) : '';
-}
-function resolveZipName(base, name) {
-  const resolved = path.posix.normalize(
-    path.posix.join(path.posix.dirname(base), name),
-  );
-  if (resolved.startsWith('../') || resolved === '..')
-    fail('INVALID_EPUB', 'EPUB 包含越界资源路径。');
-  return resolved;
-}
-function readZipEntry(files, name) {
-  if (!files[name]) fail('INVALID_EPUB', `EPUB 缺少必要文件：${name}。`);
-  return strFromU8(files[name]);
-}
-function parseEpub(buffer) {
-  let files;
-  try {
-    files = unzipSync(new Uint8Array(buffer));
-  } catch (error) {
-    fail('INVALID_EPUB', 'EPUB 文件损坏或不是有效的 ZIP 容器。', error);
-  }
-  const container = readZipEntry(files, 'META-INF/container.xml');
-  const rootfile = container.match(/full-path\s*=\s*["']([^"']+)["']/i)?.[1];
-  if (!rootfile) fail('INVALID_EPUB', 'EPUB 缺少 OPF 书籍清单。');
-  const opf = readZipEntry(files, rootfile);
-  const title =
-    xmlValue(opf, 'dc:title') || xmlValue(opf, 'title') || '未命名书籍';
-  const author =
-    xmlValue(opf, 'dc:creator') || xmlValue(opf, 'creator') || '未知作者';
-  const manifest = new Map();
-  for (const item of opf.matchAll(/<item\b([^>]+)>/gi)) {
-    const attrs = item[1];
-    const id = attrs.match(/\bid\s*=\s*["']([^"']+)/i)?.[1];
-    const href = attrs.match(/\bhref\s*=\s*["']([^"']+)/i)?.[1];
-    if (id && href) manifest.set(id, { name: resolveZipName(rootfile, href) });
-  }
-  const spine = [...opf.matchAll(/<itemref\b[^>]*\bidref\s*=\s*["']([^"']+)/gi)]
-    .map((match) => manifest.get(match[1]))
-    .filter(Boolean);
-  const chapters = spine.map((item, index) => {
-    const html = readZipEntry(files, item.name);
-    return {
-      id: `chapter-${index + 1}`,
-      title: xmlValue(html, 'title') || `第 ${index + 1} 章`,
-      text: cleanText(html),
-    };
-  });
-  return { title, author, chapters, hasToc: /<nav\b|toc\.ncx/i.test(opf) };
+function comparablePath(value) {
+  if (process.platform !== 'win32') return value;
+  const normalized = value.startsWith('\\\\?\\') ? value.slice(4) : value;
+  return normalized.toLowerCase();
 }
 function decodeTxt(buffer) {
   if (
@@ -103,14 +42,17 @@ function decodeTxt(buffer) {
   fail('UNKNOWN_ENCODING', '无法确定文本编码，请转换为 UTF-8 后重试。');
 }
 function parseTxt(buffer) {
+  if (buffer.length > MAX_BYTES)
+    fail('CONTENT_LIMIT', 'TXT 超过 32 MiB 大小限制。');
   const { text, encoding } = decodeTxt(buffer);
   const chapters = [];
   const heading =
     /^\s*(第[一二三四五六七八九十百千万零〇0-9]+[章节回部卷篇].*|Chapter\s+\d+.*)$/i;
   let current = { id: 'chapter-1', title: '正文', text: '' };
   for (const line of text.split(/\r?\n/)) {
-    if (heading.test(line) && current.text.trim()) {
-      chapters.push({ ...current, text: current.text.trim() });
+    if (heading.test(line)) {
+      if (current.text.trim() || chapters.length || current.title !== '正文')
+        chapters.push({ ...current, text: current.text.trim() });
       current = {
         id: `chapter-${chapters.length + 1}`,
         title: line.trim(),
@@ -120,7 +62,23 @@ function parseTxt(buffer) {
   }
   if (current.text.trim() || !chapters.length)
     chapters.push({ ...current, text: current.text.trim() });
-  return { title: '', author: '', chapters, encoding };
+  return {
+    title: '',
+    author: '',
+    chapters: chapters
+      .map((chapter) => ({
+        ...chapter,
+        blocks: chapter.text
+          .split(/\n+/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      }))
+      .map((chapter) => ({
+        ...chapter,
+        blocks: chapter.blocks.length ? chapter.blocks : [''],
+      })),
+    encoding,
+  };
 }
 class LibraryManager {
   constructor({ root, store }) {
@@ -146,11 +104,14 @@ class LibraryManager {
       .stat(source)
       .catch((error) => fail('IMPORT_FAILED', '找不到要导入的文件。', error));
     if (!stat.isFile()) fail('IMPORT_FAILED', '导入目标不是文件。');
+    if (stat.size > MAX_BYTES)
+      fail('CONTENT_LIMIT', '书籍超过 32 MiB 大小限制。');
     const extension = path.extname(source).toLowerCase();
     if (!['.epub', '.txt'].includes(extension))
       fail('UNSUPPORTED_FORMAT', '仅支持 EPUB 和 TXT 文件。');
     const bytes = await fs.readFile(source);
-    const parsed = extension === '.epub' ? parseEpub(bytes) : parseTxt(bytes);
+    const parsed =
+      extension === '.epub' ? safeParseEpub(bytes) : parseTxt(bytes);
     const catalog = await this._catalog();
     const hash = createHash('sha256').update(bytes).digest('hex');
     const duplicate = catalog.data.books.find(
@@ -161,7 +122,7 @@ class LibraryManager {
     const bookId = `book-${randomUUID().replaceAll('-', '')}`;
     const destination = path.join(this.root, 'books', `${bookId}${extension}`);
     await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
-    await fs.copyFile(source, destination);
+    await fs.writeFile(destination, bytes, { flag: 'wx', mode: 0o600 });
     const book = {
       bookId,
       title: parsed.title || path.basename(source, extension),
@@ -194,6 +155,30 @@ class LibraryManager {
     );
     if (index < 0) fail('NOT_FOUND', '找不到这本书。');
     const book = catalog.data.books[index];
+    if (
+      !/^book-[a-z0-9]{32}$/.test(book.bookId) ||
+      !['epub', 'txt'].includes(book.format) ||
+      book.fileName !== `${book.bookId}.${book.format}`
+    )
+      fail('INVALID_BOOK', '书籍文件记录无效，未执行删除。');
+    const booksDirectory = path.resolve(this.root, 'books');
+    const bookPath = path.resolve(
+      booksDirectory,
+      `${book.bookId}.${book.format}`,
+    );
+    if (path.dirname(bookPath) !== booksDirectory)
+      fail('INVALID_BOOK', '书籍文件路径无效，未执行删除。');
+    const realRoot = await fs.realpath(this.root).catch(() => '');
+    const realBooksDirectory = await fs
+      .realpath(booksDirectory)
+      .catch(() => '');
+    if (
+      !realRoot ||
+      !realBooksDirectory ||
+      comparablePath(path.dirname(realBooksDirectory)) !==
+        comparablePath(realRoot)
+    )
+      fail('INVALID_BOOK', '书籍目录路径无效，未执行删除。');
     const books = keepNotes
       ? [...catalog.data.books]
       : catalog.data.books.filter((item) => item.bookId !== bookId);
@@ -204,6 +189,7 @@ class LibraryManager {
         removedAt: new Date().toISOString(),
       };
     await this.store.save('library', { books }, catalog.revision);
+    if (!keepNotes) await this.store.remove(`reading-${book.bookId}`);
     if (book.fileName)
       await fs.rm(path.join(this.root, 'books', book.fileName), {
         force: true,
@@ -214,7 +200,7 @@ class LibraryManager {
 module.exports = {
   LibraryManager,
   LibraryError,
-  parseEpub,
+  parseEpub: safeParseEpub,
   parseTxt,
   decodeTxt,
 };
