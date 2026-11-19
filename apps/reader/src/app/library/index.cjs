@@ -163,21 +163,6 @@ class LibraryManager {
     );
     if (path.dirname(bookPath) !== booksDirectory)
       fail('INVALID_BOOK', '书籍文件路径无效，未执行删除。');
-    const realBooksDirectory = await fs
-      .realpath(booksDirectory)
-      .catch(() => '');
-    const comparableBooksDirectory =
-      process.platform === 'win32' && realBooksDirectory.startsWith('\\\\?\\')
-        ? realBooksDirectory.slice(4)
-        : realBooksDirectory;
-    if (
-      realBooksDirectory &&
-      (process.platform === 'win32'
-        ? comparableBooksDirectory.toLowerCase() !==
-          booksDirectory.toLowerCase()
-        : realBooksDirectory !== booksDirectory)
-    )
-      fail('INVALID_BOOK', '书籍目录路径无效，未执行删除。');
     const books = keepNotes
       ? [...catalog.data.books]
       : catalog.data.books.filter((item) => item.bookId !== bookId);
