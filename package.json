@@ -56,6 +56,8 @@
   ],
   "packageManager": "npm@11.19.0",
   "dependencies": {
+    "fflate": "0.8.2",
+    "iconv-lite": "0.6.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "6.30.6"

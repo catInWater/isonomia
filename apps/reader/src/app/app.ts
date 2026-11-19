@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { allowRequest, rendererDocument, validJson } from './api/security';
 import { DurableStore } from './storage/index.cjs';
 import type { Json } from './storage/index.cjs';
+import { LibraryManager } from './library/index.cjs';
 
 export default class App {
   // Keep a global reference of the window object, if you don't, the window will
@@ -16,6 +17,8 @@ export default class App {
   static documentUrl = '';
   static storageAvailable = false;
   static store: InstanceType<typeof DurableStore> | null = null;
+  static library: InstanceType<typeof LibraryManager> | null = null;
+  static libraryRoot = '';
   static storageError = '';
 
   public static isDevelopmentMode() {
@@ -75,6 +78,8 @@ export default class App {
             !Array.isArray(data),
         },
       });
+      App.libraryRoot = root;
+      App.library = new LibraryManager({ root, store: App.store });
       App.storageAvailable = true;
     } catch (error) {
       App.storageAvailable = false;

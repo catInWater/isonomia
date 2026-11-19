@@ -28,8 +28,16 @@ export function rendererDocument(directory: string, port?: number): string {
 /** No renderer supplied file paths, URLs, commands or raw IPC channels. */
 export function validateRequest(method: string, args: unknown[]): void {
   const valid =
-    ((method === 'version' || method === 'storageStatus') &&
+    ((method === 'version' ||
+      method === 'storageStatus' ||
+      method === 'libraryList' ||
+      method === 'libraryImport') &&
       args.length === 0) ||
+    (method === 'libraryRemove' &&
+      args.length === 2 &&
+      validBookId(args[0]) &&
+      typeof args[1] === 'boolean') ||
+    (method === 'libraryOpen' && args.length === 1 && validBookId(args[0])) ||
     (method === 'load' && args.length === 1 && validRecordId(args[0])) ||
     (method === 'save' &&
       args.length === 3 &&
@@ -48,10 +56,14 @@ export function validateRequest(method: string, args: unknown[]): void {
   if (!valid) throw new Error('请求无效或数据格式不支持。请检查内容后重试。');
 }
 
+export function validBookId(value: unknown): value is string {
+  return typeof value === 'string' && /^book-[a-z0-9]{32}$/.test(value);
+}
+
 export function validRecordId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    /^(?:book|note)-[a-z0-9_-]{1,74}$|^settings$/.test(value)
+    /^(?:book|note)-[a-z0-9_-]{1,74}$|^settings$|^library$/.test(value)
   );
 }
 
