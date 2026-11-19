@@ -152,6 +152,7 @@ class LibraryManager {
         removedAt: new Date().toISOString(),
       };
     await this.store.save('library', { books }, catalog.revision);
+    if (!keepNotes) await this.store.remove(`reading-${book.bookId}`);
     if (book.fileName)
       await fs.rm(path.join(this.root, 'books', book.fileName), {
         force: true,
