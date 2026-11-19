@@ -168,12 +168,15 @@ class LibraryManager {
     );
     if (path.dirname(bookPath) !== booksDirectory)
       fail('INVALID_BOOK', '书籍文件路径无效，未执行删除。');
+    const realRoot = await fs.realpath(this.root).catch(() => '');
     const realBooksDirectory = await fs
       .realpath(booksDirectory)
       .catch(() => '');
     if (
-      realBooksDirectory &&
-      comparablePath(realBooksDirectory) !== comparablePath(booksDirectory)
+      !realRoot ||
+      !realBooksDirectory ||
+      comparablePath(path.dirname(realBooksDirectory)) !==
+        comparablePath(realRoot)
     )
       fail('INVALID_BOOK', '书籍目录路径无效，未执行删除。');
     const books = keepNotes
