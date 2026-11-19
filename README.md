@@ -122,11 +122,13 @@ npm exec -- nx run reader:make
 
 Both targets first build the production shell and UI. Outputs go to
 `dist/packages` and `dist/executables`, respectively. Publishing is disabled.
-The CI Windows job builds an unsigned x64 installer and retains it as a short-lived
-artifact without release/publish steps; it does not install, launch, or uninstall
-the artifact. CI has not yet run on Windows. The NSIS uninstall policy preserves
-application data; verify it explicitly against a throwaway Windows profile before
-release. Platform signing, icons, update service and release metadata still need
+The CI Windows job builds an unsigned x64 NSIS installer and retains only the
+root-level installer as a short-lived artifact without release/publish steps; the
+`win-unpacked` executable is not a standalone portable app and must not be copied
+out of its folder (it needs adjacent Electron runtime files including `icudtl.dat`
+and `resources`). CI builds the installer but does not install, launch, or uninstall
+it. The NSIS uninstall policy preserves application data; verify it explicitly
+against a throwaway Windows profile before release. Platform signing, icons, update service and release metadata still need
 to be configured. Packaging options live in
 `apps/reader/src/app/options/maker.options.json`.
 

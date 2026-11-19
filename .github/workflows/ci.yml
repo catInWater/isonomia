@@ -69,10 +69,20 @@ jobs:
         run: npm exec -- nx run reader:test
       - name: Build Windows installer without publishing
         run: npm exec -- nx run reader:make
+      - name: Verify installer output
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem dist/executables -File -Filter '*.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one root-level NSIS installer; found $($installers.Count)."
+          }
+          if ($installers[0].Name -like '*-unpacked*') {
+            throw "Refusing to publish an unpacked Electron executable as an installer."
+          }
       - name: Retain unsigned installer for manual smoke testing
         uses: actions/upload-artifact@v4
         with:
-          name: reader-windows-x64-unsigned
-          path: dist/executables/**/*.exe
+          name: reader-windows-x64-nsis-installer
+          path: dist/executables/*.exe
           if-no-files-found: error
           retention-days: 14
