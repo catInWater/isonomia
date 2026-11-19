@@ -1,4 +1,4 @@
-import type { ReaderChapter } from '@reader/storage-bridge';
+import type { ReaderChapter, ReadingPosition } from '@reader/storage-bridge';
 
 type PagePart = { blockIndex: number; start: number; text: string };
 type ReaderPage = PagePart[];
@@ -11,6 +11,26 @@ export function safeBoundary(value: string, offset: number): number {
     /[\uDC00-\uDFFF]/.test(value[clamped])
     ? clamped - 1
     : clamped;
+}
+
+export function pageForPosition(
+  pages: ReaderPage[],
+  position: ReadingPosition,
+  blocks: string[],
+) {
+  return Math.max(
+    0,
+    pages.findIndex((page) =>
+      page.some(
+        (part) =>
+          part.blockIndex === position.blockIndex &&
+          position.offset >= part.start &&
+          (position.offset < part.start + part.text.length ||
+            (position.offset === blocks[part.blockIndex]?.length &&
+              position.offset === part.start + part.text.length)),
+      ),
+    ),
+  );
 }
 
 export function makePages(

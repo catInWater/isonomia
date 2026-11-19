@@ -266,6 +266,10 @@ class ReadingManager {
         images: (chapter.images || []).map(({ size: _size, ...image }) => ({
           ...image,
         })),
+        links: (chapter.links || []).map((link) => ({
+          ...link,
+          target: { ...link.target },
+        })),
       };
     });
   }

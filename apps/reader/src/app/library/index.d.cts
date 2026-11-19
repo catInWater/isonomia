@@ -1,4 +1,4 @@
-import type { Json } from '@reader/storage-bridge';
+import type { Json, ReaderImage, ReaderLink } from '@reader/storage-bridge';
 export interface BookSummary {
   bookId: string;
   title: string;
@@ -38,14 +38,8 @@ export function parseEpub(buffer: Buffer): {
     title: string;
     text: string;
     blocks: string[];
-    images: {
-      blockIndex: number;
-      offset: number;
-      src: string;
-      alt: string;
-      inline: boolean;
-      size: number;
-    }[];
+    images: (ReaderImage & { size: number })[];
+    links: ReaderLink[];
   }[];
   cover: { mediaType: string; bytes: Buffer; dataUrl: string } | null;
   hasToc: boolean;

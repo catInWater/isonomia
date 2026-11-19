@@ -74,17 +74,29 @@ export interface ReadingPreferences {
   fontFamily: 'default' | 'serif' | 'sans-serif' | 'monospace';
   theme: 'light' | 'dark' | 'sepia';
 }
+export interface ReaderImage {
+  blockIndex: number;
+  offset: number;
+  src: string;
+  alt: string;
+  inline?: boolean;
+  width?: number;
+  height?: number;
+  displayWidth?: string;
+  displayHeight?: string;
+}
+export interface ReaderLink {
+  blockIndex: number;
+  offset: number;
+  length: number;
+  target: ReadingPosition;
+}
 export interface ReaderChapter {
   id: string;
   title: string;
   blocks: string[];
-  images?: {
-    blockIndex: number;
-    offset: number;
-    src: string;
-    alt: string;
-    inline?: boolean;
-  }[];
+  images?: ReaderImage[];
+  links?: ReaderLink[];
 }
 export interface OpenedBook {
   book: BookSummary;

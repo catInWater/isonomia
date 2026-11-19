@@ -5,11 +5,14 @@ import type {
   ImportFailure,
   OpenedBook,
   ReaderChapter,
+  ReaderImage,
+  ReaderLink,
   ReadingPosition,
   ReadingPreferences,
 } from '@reader/storage-bridge';
 import styles from './app.module.css';
-import { makePages, safeBoundary } from './pagination';
+import { makePages, safeBoundary, pageForPosition } from './pagination';
+import { bookImageStyle, contentRuns } from './book-content';
 
 declare global {
   interface Window {
@@ -35,13 +38,6 @@ declare global {
 
 type Sort = 'title' | 'author' | 'recent' | 'imported';
 type ReaderStyle = CSSProperties & Record<`--${string}`, string | number>;
-type ChapterImage = {
-  blockIndex: number;
-  offset: number;
-  src: string;
-  alt: string;
-  inline?: boolean;
-};
 
 const SAFE_IMAGE_DATA_URL =
   /^data:image\/(?:jpeg|png|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
@@ -72,15 +68,8 @@ function estimatePageCapacity(
   return Math.max(400, Math.min(6000, charsPerLine * lines * 0.88));
 }
 
-function BookImage({
-  src,
-  alt,
-  inline,
-}: {
-  src: string;
-  alt: string;
-  inline: boolean;
-}) {
+function BookImage({ image }: { image: ReaderImage }) {
+  const { src, alt, inline } = image;
   const [failed, setFailed] = useState(false);
   if (failed)
     return (
@@ -95,6 +84,9 @@ function BookImage({
       className={inline ? styles.inlineBookImage : styles.bookImage}
       src={src}
       alt={alt}
+      width={image.width}
+      height={image.height}
+      style={bookImageStyle(image)}
       loading="lazy"
       decoding="async"
       onError={() => setFailed(true)}
@@ -104,43 +96,54 @@ function BookImage({
 
 function renderImageAwareText(
   text: string,
-  images: ChapterImage[],
+  images: ReaderImage[],
   startOffset = 0,
   instanceKey = '',
+  links: ReaderLink[] = [],
+  onNavigate?: (target: ReadingPosition) => void,
 ): ReactNode[] {
-  const result: ReactNode[] = [];
-  let cursor = 0;
-  images.forEach((image, index) => {
-    const offset = Math.max(
-      0,
-      Math.min(text.length, image.offset - startOffset),
+  return contentRuns(text, images, links, startOffset).map((run) => {
+    const image = run.image;
+    const key = `${instanceKey}-${run.offset}`;
+    const content = (
+      <span
+        key={key}
+        data-content-start={run.offset}
+        data-content-length={run.length}
+      >
+        {image ? (
+          isSafeImageDataUrl(image.src) ? (
+            <BookImage image={image} />
+          ) : (
+            <span
+              className={
+                image.inline ? styles.inlineImageFallback : styles.imageFallback
+              }
+            >
+              {image.alt || '[图片无法显示]'}
+            </span>
+          )
+        ) : (
+          run.text
+        )}
+      </span>
     );
-    if (offset < cursor) return;
-    if (offset > cursor) result.push(text.slice(cursor, offset));
-    result.push(
-      isSafeImageDataUrl(image.src) ? (
-        <BookImage
-          key={`book-image-${instanceKey}-${image.blockIndex}-${image.offset}-${index}`}
-          src={image.src}
-          alt={image.alt}
-          inline={image.inline === true}
-        />
-      ) : (
-        <span
-          key={`invalid-image-${instanceKey}-${image.blockIndex}-${image.offset}-${index}`}
-          className={
-            image.inline ? styles.inlineImageFallback : styles.imageFallback
-          }
-        >
-          {image.alt || '[图片无法显示]'}
-        </span>
-      ),
+    return run.target && onNavigate ? (
+      <a
+        key={key}
+        className={styles.bookLink}
+        href={`#reader-${run.target.chapterId}-${run.target.blockIndex}-${run.target.offset}`}
+        onClick={(event) => {
+          event.preventDefault();
+          if (run.target) onNavigate(run.target);
+        }}
+      >
+        {content}
+      </a>
+    ) : (
+      content
     );
-    cursor =
-      offset < text.length && text.charAt(offset) === '￼' ? offset + 1 : offset;
   });
-  if (cursor < text.length) result.push(text.slice(cursor));
-  return result;
 }
 
 function BookCover({ book }: { book: BookSummary }) {
@@ -223,6 +226,7 @@ export function App() {
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restorePending = useRef(true);
+  const linkFocusPending = useRef(false);
   const focusBeforeMode = useRef<HTMLElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -462,6 +466,11 @@ export function App() {
     [opened, position, persistReading],
   );
 
+  const followBookLink = (target: ReadingPosition) => {
+    linkFocusPending.current = true;
+    void loadChapter(target.chapterId, target);
+  };
+
   const pages = useMemo(
     () =>
       chapter
@@ -481,16 +490,17 @@ export function App() {
   useEffect(() => {
     if (!chapter || !position || !restorePending.current) return;
     if (preferences.mode === 'paginated') {
-      const target = pages.findIndex((page) =>
-        page.some(
-          (part) =>
-            part.blockIndex === position.blockIndex &&
-            position.offset >= part.start &&
-            position.offset <= part.start + part.text.length,
-        ),
-      );
-      setPageIndex(Math.max(0, target));
+      setPageIndex(pageForPosition(pages, position, chapter.blocks));
       restorePending.current = false;
+      if (linkFocusPending.current)
+        requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLElement>(
+              `[data-page-block="${position.blockIndex}"]`,
+            )
+            ?.focus({ preventScroll: true });
+          linkFocusPending.current = false;
+        });
       return;
     }
     requestAnimationFrame(() => {
@@ -502,16 +512,52 @@ export function App() {
       const fraction = target.dataset.blockLength
         ? Math.min(1, position.offset / Number(target.dataset.blockLength))
         : 0;
-      const scrollerTop = scroller.getBoundingClientRect().top;
-      const targetTop = target.getBoundingClientRect().top;
+      let targetTop =
+        target.getBoundingClientRect().top + target.offsetHeight * fraction;
+      const runs = Array.from(
+        target.querySelectorAll<HTMLElement>('[data-content-start]'),
+      );
+      const run =
+        runs.find(
+          (element) =>
+            position.offset >= Number(element.dataset.contentStart) &&
+            position.offset <
+              Number(element.dataset.contentStart) +
+                Number(element.dataset.contentLength),
+        ) || runs[runs.length - 1];
+      if (run) {
+        const node = run.firstChild;
+        if (node?.nodeType === Node.TEXT_NODE) {
+          const range = document.createRange();
+          const offset = Math.max(
+            0,
+            Math.min(
+              node.textContent?.length || 0,
+              position.offset - Number(run.dataset.contentStart),
+            ),
+          );
+          range.setStart(node, offset);
+          range.setEnd(
+            node,
+            Math.min(node.textContent?.length || 0, offset + 1),
+          );
+          const rect = range.getBoundingClientRect();
+          if (rect.height > 0) targetTop = rect.top;
+        } else
+          targetTop = (run.querySelector('img') || run).getBoundingClientRect()
+            .top;
+      }
       scroller.scrollTop = Math.max(
         0,
         scroller.scrollTop +
           targetTop -
-          scrollerTop +
-          target.offsetHeight * fraction -
+          scroller.getBoundingClientRect().top -
           8,
       );
+      if (linkFocusPending.current) {
+        target.focus({ preventScroll: true });
+        linkFocusPending.current = false;
+      }
       restorePending.current = false;
     });
   }, [
@@ -903,6 +949,7 @@ export function App() {
                     key={`${chapter.id}-${index}`}
                     data-block-index={index}
                     data-block-length={block.length}
+                    tabIndex={-1}
                   >
                     {renderImageAwareText(
                       block,
@@ -911,6 +958,10 @@ export function App() {
                       ),
                       0,
                       chapter.id,
+                      (chapter.links || []).filter(
+                        (link) => link.blockIndex === index,
+                      ),
+                      followBookLink,
                     )}
                     {!block && ' '}
                   </p>
@@ -924,7 +975,11 @@ export function App() {
                   aria-live="polite"
                 >
                   {(pages[pageIndex] || []).map((part, index) => (
-                    <p key={`${part.blockIndex}-${part.start}-${index}`}>
+                    <p
+                      key={`${part.blockIndex}-${part.start}-${index}`}
+                      data-page-block={part.blockIndex}
+                      tabIndex={-1}
+                    >
                       {renderImageAwareText(
                         part.text,
                         (chapter.images || []).filter(
@@ -935,6 +990,10 @@ export function App() {
                         ),
                         part.start,
                         `${chapter.id}-${pageIndex}`,
+                        (chapter.links || []).filter(
+                          (link) => link.blockIndex === part.blockIndex,
+                        ),
+                        followBookLink,
                       )}
                     </p>
                   ))}

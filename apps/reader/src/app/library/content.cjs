@@ -2,6 +2,8 @@
 const path = require('node:path');
 const { inflateRawSync } = require('node:zlib');
 const { SaxesParser } = require('saxes');
+const { imageRules, imageLayout } = require('./image-layout.cjs');
+const MAX_BOOK_LINKS = 8192;
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRY = 8 * 1024 * 1024;
 // Deflate options, the enhanced-deflate compatibility bit, data descriptors and UTF-8 names.
@@ -228,35 +230,72 @@ function blocksFromDocument(
   documentPath,
   resolveImage,
   reserveImage,
+  rules,
 ) {
   const blocks = [];
   const images = [];
+  const links = [];
+  const anchors = new Map();
+  let anchorCount = 0;
   let imageBytes = 0;
   let current = '';
   let currentImages = [];
+  let currentLinks = [];
+  let currentAnchors = [];
+  let activeHref = null;
+  const append = (value) => {
+    const offset = current.length;
+    current += value;
+    if (activeHref && value.length && currentLinks.length < MAX_BOOK_LINKS) {
+      const last = currentLinks.at(-1);
+      if (last?.href === activeHref && last.end === offset)
+        last.end = current.length;
+      else currentLinks.push({ href: activeHref, offset, end: current.length });
+    }
+  };
   const flush = () => {
     const value = current.replace(/\s+/g, ' ').trim();
+    const normalizedOffset = (offset) =>
+      Math.min(
+        value.length,
+        current.slice(0, offset).replace(/\s+/g, ' ').trimStart().length,
+      );
     if (value) {
       const blockIndex = blocks.length;
       blocks.push(value);
-      for (const image of currentImages) {
-        const offset = current
-          .slice(0, image.offset)
-          .replace(/\s+/g, ' ')
-          .trimStart().length;
-        const inline = image.inline;
+      for (const image of currentImages)
         images.push({
+          ...image,
           blockIndex,
-          offset,
-          assetId: image.assetId,
-          alt: image.alt,
-          inline,
-          size: image.size,
+          offset: normalizedOffset(image.offset),
         });
+      for (const link of currentLinks) {
+        const offset = normalizedOffset(link.offset);
+        const end = normalizedOffset(link.end);
+        if (end > offset && links.length < MAX_BOOK_LINKS)
+          links.push({
+            blockIndex,
+            offset,
+            length: end - offset,
+            href: link.href,
+          });
       }
-    }
+      for (const anchor of currentAnchors) {
+        if (!anchors.has(anchor.id))
+          anchors.set(anchor.id, {
+            blockIndex,
+            offset: normalizedOffset(anchor.offset),
+          });
+      }
+      currentAnchors = [];
+    } else
+      currentAnchors = currentAnchors.map((anchor) => ({
+        ...anchor,
+        offset: 0,
+      }));
     current = '';
     currentImages = [];
+    currentLinks = [];
   };
   const omitted = new Set([
     'head',
@@ -276,11 +315,29 @@ function blocksFromDocument(
     /^(p|div|section|article|h[1-6]|li|blockquote|pre|tr|br|hr)$/;
   function walk(node) {
     if (typeof node === 'string') {
-      current += node;
+      append(node);
       return;
     }
     if (omitted.has(node.name)) return;
     if (boundary.test(node.name)) flush();
+    for (const id of [
+      node.attrs.id,
+      node.attrs['xml:id'],
+      node.name === 'a' ? node.attrs.name : null,
+    ]) {
+      if (
+        typeof id === 'string' &&
+        id.length > 0 &&
+        id.length <= 512 &&
+        anchorCount < MAX_BOOK_LINKS
+      ) {
+        currentAnchors.push({ id, offset: current.length });
+        anchorCount++;
+      }
+    }
+    const previousHref = activeHref;
+    if (node.name === 'a' && typeof node.attrs.href === 'string')
+      activeHref = node.attrs.href.length <= 4096 ? node.attrs.href : null;
     if (node.name === 'img') {
       const alt =
         typeof node.attrs.alt === 'string' ? node.attrs.alt.slice(0, 512) : '';
@@ -288,7 +345,7 @@ function blocksFromDocument(
       try {
         image = resolveImage(documentPath, node.attrs.src);
       } catch {
-        // An unusable optional image must not make otherwise readable text fail.
+        // A broken optional image must not make otherwise readable text fail.
       }
       if (
         image &&
@@ -297,24 +354,32 @@ function blocksFromDocument(
         reserveImage(image.size)
       ) {
         imageBytes += image.size;
-        const classNames = String(node.attrs.class || '').split(/\s+/);
         currentImages.push({
           assetId: image.assetId,
           size: image.size,
           alt,
-          inline: classNames.includes('inline'),
+          ...imageLayout(node.attrs, rules, image),
           offset: current.length,
         });
-        current += IMAGE_MARKER;
-      } else current += alt ? `[${alt}]` : '[图片]';
+        append(IMAGE_MARKER);
+      } else append(alt ? `[${alt}]` : '[图片]');
     } else node.children.forEach(walk);
+    activeHref = previousHref;
     if (boundary.test(node.name)) flush();
   }
   const body = all(document, 'body')[0];
   if (!body) invalid('EPUB 缺少章节正文。');
   walk(body);
   flush();
-  return { blocks: blocks.length ? blocks : [''], images };
+  // Empty/end-of-document anchors still have a valid destination.
+  for (const anchor of currentAnchors) {
+    if (!anchors.has(anchor.id))
+      anchors.set(anchor.id, {
+        blockIndex: Math.max(0, blocks.length - 1),
+        offset: blocks.at(-1)?.length || 0,
+      });
+  }
+  return { blocks: blocks.length ? blocks : [''], images, links, anchors };
 }
 function parseEpub(buffer) {
   if (buffer.length > MAX_BYTES) invalid('EPUB 超过 32 MiB 大小限制。');
@@ -521,7 +586,12 @@ function parseEpub(buffer) {
       return null;
     }
     const assetId = `image-${Object.keys(assets).length + 1}`;
-    assets[assetId] = { mediaType: actualType, bytes: contents, dataUrl };
+    assets[assetId] = {
+      mediaType: actualType,
+      bytes: contents,
+      dataUrl,
+      ...imageDimensions(contents, actualType),
+    };
     totalImageBytes += contents.length;
     assetByPath.set(name, assetId);
     return assetId;
@@ -539,9 +609,49 @@ function parseEpub(buffer) {
     return assetId
       ? {
           assetId,
+          width: assets[assetId].width,
+          height: assets[assetId].height,
           size: assets[assetId].bytes.length,
         }
       : null;
+  };
+  const stylesheetCache = new Map();
+  let stylesheetBytes = 0;
+  const layoutRules = (document, documentPath) => {
+    const rules = [];
+    for (const link of all(document, 'link').slice(0, 32)) {
+      if (
+        !String(link.attrs.rel || '')
+          .toLowerCase()
+          .split(/\s+/)
+          .includes('stylesheet')
+      )
+        continue;
+      try {
+        const name = resource(documentPath, link.attrs.href);
+        if (manifestByPath.get(name)?.['media-type'] !== 'text/css') continue;
+        if (!stylesheetCache.has(name)) {
+          const bytes = files[name];
+          if (
+            !bytes ||
+            bytes.length > 65536 ||
+            stylesheetBytes + bytes.length > 262144
+          )
+            continue;
+          stylesheetBytes += bytes.length;
+          stylesheetCache.set(name, imageRules(bytes.toString('utf8')));
+        }
+        rules.push(...stylesheetCache.get(name));
+      } catch {
+        /* Optional styling never authorizes a resource request. */
+      }
+      if (rules.length >= 512) break;
+    }
+    for (const style of all(document, 'style').slice(0, 16)) {
+      if (rules.length >= 512) break;
+      rules.push(...imageRules(text(style)));
+    }
+    return rules.slice(0, 512);
   };
   const coverMetadataId = all(opf, 'meta').find(
     (item) => item.attrs.name?.toLowerCase() === 'cover',
@@ -577,17 +687,16 @@ function parseEpub(buffer) {
     const href = resource(opfName, item.href);
     if (!documents.has(href)) {
       const document = read(href);
-      const { blocks, images } = blocksFromDocument(
+      const content = blocksFromDocument(
         document,
         href,
         resolveImage,
         reserveImageReference,
+        layoutRules(document, href),
       );
       documents.set(href, {
-        blocks,
-        images,
+        ...content,
         title: text(all(document, 'title')[0]).trim().slice(0, 512),
-        text: blocks.join('\n\n'),
       });
     }
     const document = documents.get(href);
@@ -598,6 +707,14 @@ function parseEpub(buffer) {
       imagesByBlock.set(image.blockIndex, images);
     }
     const chapterImages = [];
+    const replacements = [];
+    const remap = (blockIndex, offset) =>
+      offset +
+      replacements
+        .filter(
+          (item) => item.blockIndex === blockIndex && item.offset < offset,
+        )
+        .reduce((sum, item) => sum + item.delta, 0);
     const blocks = document.blocks.map((block, blockIndex) => {
       let cursor = 0;
       let rendered = '';
@@ -623,7 +740,18 @@ function parseEpub(buffer) {
           });
           returnedImageBytes += image.size;
           returnedImageReferences++;
-        } else rendered += image.alt ? `[${image.alt}]` : '[图片]';
+        } else {
+          const fallback = (image.alt ? `[${image.alt}]` : '[图片]').replace(
+            /\s+/g,
+            ' ',
+          );
+          rendered += fallback;
+          replacements.push({
+            blockIndex,
+            offset: image.offset,
+            delta: fallback.length - 1,
+          });
+        }
         cursor = image.offset + 1;
       }
       return rendered + block.slice(cursor);
@@ -634,12 +762,73 @@ function parseEpub(buffer) {
       blocks,
       images: chapterImages,
       text: blocks.join('\n\n'),
+      resourcePath: href,
+      anchors: new Map(
+        [...document.anchors].map(([id, location]) => [
+          id,
+          { ...location, offset: remap(location.blockIndex, location.offset) },
+        ]),
+      ),
+      sourceLinks: document.links.map((link) => ({
+        ...link,
+        offset: remap(link.blockIndex, link.offset),
+        length:
+          remap(link.blockIndex, link.offset + link.length) -
+          remap(link.blockIndex, link.offset),
+      })),
     };
+  });
+  const chaptersByPath = new Map();
+  for (const chapter of chapters) {
+    if (!chaptersByPath.has(chapter.resourcePath))
+      chaptersByPath.set(chapter.resourcePath, chapter);
+  }
+  let returnedLinks = 0;
+  const publicChapters = chapters.map((chapter) => {
+    const links = [];
+    for (const link of chapter.sourceLinks) {
+      if (returnedLinks >= MAX_BOOK_LINKS) break;
+      try {
+        if (/[\\\u0000- ]/.test(link.href)) continue;
+        const hash = link.href.indexOf('#');
+        const pathPart = hash < 0 ? link.href : link.href.slice(0, hash);
+        const fragment =
+          hash < 0 ? '' : decodeURIComponent(link.href.slice(hash + 1));
+        if (fragment.length > 512 || /[\u0000-\u001f]/.test(fragment)) continue;
+        const targetPath = pathPart
+          ? resource(chapter.resourcePath, pathPart)
+          : chapter.resourcePath;
+        const targetChapter =
+          targetPath === chapter.resourcePath
+            ? chapter
+            : chaptersByPath.get(targetPath);
+        const location = fragment
+          ? targetChapter?.anchors.get(fragment)
+          : { blockIndex: 0, offset: 0 };
+        if (!targetChapter || !location) continue;
+        links.push({
+          blockIndex: link.blockIndex,
+          offset: link.offset,
+          length: link.length,
+          target: { chapterId: targetChapter.id, ...location },
+        });
+        returnedLinks++;
+      } catch {
+        /* External, malformed and missing targets stay inert text. */
+      }
+    }
+    const {
+      resourcePath: _path,
+      anchors: _anchors,
+      sourceLinks: _links,
+      ...content
+    } = chapter;
+    return { ...content, links };
   });
   return {
     title: text(all(opf, 'title')[0]).trim().slice(0, 512) || '未命名书籍',
     author: text(all(opf, 'creator')[0]).trim().slice(0, 512) || '未知作者',
-    chapters,
+    chapters: publicChapters,
     cover: coverAssetId ? assets[coverAssetId] : null,
     hasToc: [...manifest.values()].some(
       (item) =>
