@@ -131,10 +131,13 @@ select:focus-visible {
   outline-offset: 3px;
 }
 .cover {
+  position: relative;
   display: grid;
   place-items: center;
+  box-sizing: border-box;
+  width: min(100%, 210px);
   aspect-ratio: 3 / 4;
-  max-width: 210px;
+  overflow: hidden;
   border: 1px solid #d8ddd6;
   border-radius: 3px;
   background: linear-gradient(145deg, #e4ebe5, #d5e0d7);
@@ -150,10 +153,13 @@ select:focus-visible {
   font-size: 12px;
 }
 .cover img {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  object-fit: cover;
+  object-fit: contain;
 }
 .bookImage {
   display: block;
@@ -171,11 +177,21 @@ select:focus-visible {
   vertical-align: -0.12em;
   object-fit: contain;
 }
-.scrollContent .bookImage {
-  height: auto;
-}
 .pageContent .bookImage {
   max-height: 54vh;
+}
+.bookLink {
+  color: var(--reader-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--reader-muted);
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+.bookLink:hover,
+.bookLink:focus-visible {
+  text-decoration-thickness: 2px;
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 .imageFallback {
   display: block;
@@ -685,7 +701,7 @@ select:focus-visible {
     gap: 22px 16px;
   }
   .cover {
-    max-width: none;
+    width: 100%;
   }
   .readerHeader {
     min-height: 58px;
