@@ -224,6 +224,62 @@ test('library reads return safe inline images without EPUB file paths', async (t
   assert.ok(chapter.blocks[1].includes('￼'));
   assert.equal('fileName' in opened.book, false);
 });
+test('legacy image-placeholder reading positions migrate without resetting or migrating twice', async (t) => {
+  const { library, manager, store } = await setup(t);
+  const book = await library.importFile(
+    path.join(fixtures, 'epub-images.epub'),
+  );
+  const chapter = await manager.readChapter({
+    bookId: book.bookId,
+    chapterId: 'chapter-1',
+  });
+  const image = chapter.images[0];
+  const block = chapter.blocks[image.blockIndex];
+  const oldBlock = block.replace('￼', `[${image.alt}]`);
+  const id = `reading-${book.bookId}`;
+  for (const [oldOffset, expected] of [
+    [image.offset - 1, image.offset - 1],
+    [image.offset + 2, image.offset],
+    [oldBlock.length, block.length],
+  ]) {
+    const current = await store.load(id);
+    await store.save(
+      id,
+      {
+        contentHash: book.contentHash,
+        position: {
+          chapterId: chapter.id,
+          blockIndex: image.blockIndex,
+          offset: oldOffset,
+        },
+        preferences: DEFAULT_PREFERENCES,
+      },
+      current?.revision ?? 0,
+    );
+    const opened = await manager.openBook({ bookId: book.bookId });
+    assert.equal(opened.position.offset, expected);
+    await manager.saveReading({
+      bookId: book.bookId,
+      contentHash: book.contentHash,
+      position: opened.position,
+      preferences: opened.preferences,
+    });
+    assert.equal((await store.load(id)).data.adapterVersion, 2);
+    assert.deepEqual(
+      (await manager.openBook({ bookId: book.bookId })).position,
+      opened.position,
+    );
+  }
+  const current = await store.load(id);
+  await store.save(
+    id,
+    { ...current.data, adapterVersion: 99 },
+    current.revision,
+  );
+  await assert.rejects(manager.openBook({ bookId: book.bookId }), {
+    code: 'INVALID_STATE',
+  });
+});
 test('progress and typography persist; open updates lastReadAt; content changes fail closed', async (t) => {
   const { root, library, manager, store } = await setup(t);
   const book = await library.importFile(
