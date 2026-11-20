@@ -21,3 +21,7 @@
 - The `nx-generate` skill handles generator discovery internally - don't call nx_docs just to look up generator syntax
 
 <!-- nx configuration end-->
+
+# Delivery workflow
+
+For feature implementation, bug fixes, specification tickets, refactors, and other repository changes, load the project `reader-delivery` skill first. Use its independent-branch, validation-report, PR screenshot, current-head CI, and PR-discussion revision loop. Clarify conflicting, ambiguous, or out-of-scope review requests before changing scope. The user performs the final review and merge; do not merge or enable auto-merge. Respect local-only requests and permission boundaries.
