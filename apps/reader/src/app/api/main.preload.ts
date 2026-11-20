@@ -52,5 +52,14 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.invoke('reader:changeAnnotation', request),
     copyAnnotation: (request: { bookId: string; highlightId: string }) =>
       ipcRenderer.invoke('reader:copyAnnotation', request),
+    loadNote: (request: { bookId: string }) =>
+      ipcRenderer.invoke('reader:loadNote', request),
+    saveNote: (request: import('@reader/storage-bridge').SaveNoteRequest) =>
+      ipcRenderer.invoke('reader:saveNote', request),
+    createNoteSource: (
+      request: import('@reader/storage-bridge').CreateNoteSourceRequest,
+    ) => ipcRenderer.invoke('reader:createNoteSource', request),
+    exportNote: (request: { document: string }) =>
+      ipcRenderer.invoke('reader:exportNote', request),
   } satisfies StorageBridge),
 );

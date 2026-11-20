@@ -472,12 +472,110 @@ button.bookSecondary {
 }
 .readerLayout {
   display: grid;
-  grid-template-columns: 228px minmax(0, 1fr);
-  gap: clamp(24px, 5vw, 68px);
-  max-width: 1320px;
+  grid-template-columns: 180px minmax(0, 1fr) 12px var(--notes-width, 340px);
+  gap: 16px;
+  max-width: 1600px;
   min-height: calc(100vh - 116px);
   margin: 0 auto;
   padding: 28px clamp(16px, 4vw, 52px) 16px;
+}
+.notesCollapsed {
+  grid-template-columns: 180px minmax(0, 1fr);
+}
+.notesDock {
+  position: sticky;
+  grid-column: 4;
+  grid-row: 1;
+  top: calc(var(--reader-header-height) + 16px);
+  align-self: start;
+  min-width: 0;
+  max-height: calc(100vh - var(--reader-header-height) - 32px);
+  overflow: auto;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.notesDock[hidden] {
+  display: none;
+}
+.notesDockHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0 12px;
+}
+.notesDockHeader h2 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.notesDockHeader button {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--reader-line, #d8dfd7);
+  border-radius: 4px;
+  background: var(--reader-paper, #fff);
+  color: var(--reader-ink, #263c2b);
+  font: inherit;
+  cursor: pointer;
+}
+.notesSeparator {
+  position: sticky;
+  grid-column: 3;
+  grid-row: 1;
+  top: calc(var(--reader-header-height) + 28px);
+  height: calc(100vh - var(--reader-header-height) - 64px);
+  min-height: 160px;
+  align-self: start;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    transparent 5px,
+    var(--reader-line) 5px,
+    var(--reader-line) 7px,
+    transparent 7px
+  );
+  cursor: col-resize;
+  touch-action: none;
+}
+.notesSeparator:hover,
+.notesSeparator:focus-visible {
+  background: color-mix(in srgb, var(--reader-ink) 15%, transparent);
+  outline: 2px solid var(--reader-ink);
+  outline-offset: 2px;
+}
+.notesScrim {
+  position: fixed;
+  z-index: 7;
+  inset: 0;
+  background: rgb(0 0 0 / 35%);
+}
+.notesDrawer {
+  position: fixed;
+  z-index: 8;
+  inset: 0 0 0 auto;
+  box-sizing: border-box;
+  width: min(440px, calc(100vw - 24px));
+  max-height: 100dvh;
+  height: 100dvh;
+  padding: 16px;
+  overflow: auto;
+  background: var(--reader-paper);
+  box-shadow: -8px 0 32px rgb(0 0 0 / 20%);
+}
+.retainedNotesDialog {
+  box-sizing: border-box;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+  border-radius: 8px;
+  overflow: auto;
+  background: #fff;
+  color: #263c2b;
+  --reader-paper: #fff;
+  --reader-ink: #263c2b;
+  --reader-muted: #607164;
+  --reader-line: #d8dfd7;
 }
 .toc,
 .annotationAside {
@@ -523,6 +621,8 @@ button.bookSecondary {
   color: var(--reader-ink);
 }
 .readingColumn {
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   max-width: 900px;
   width: 100%;
