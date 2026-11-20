@@ -53,6 +53,8 @@ export interface StorageBridge {
     bookId: string;
     highlightId: string;
   }): Promise<void>;
+  loadNote(request: { bookId: string }): Promise<NoteSnapshot>;
+  saveNote(request: SaveNoteRequest): Promise<NoteSnapshot>;
 }
 export interface BookSummary {
   bookId: string;
@@ -178,6 +180,17 @@ export interface AnnotationSnapshot {
   revision: number;
   items: (Highlight & { resolution: AnchorResolution })[];
   undoHighlightId: string | null;
+}
+export interface NoteSnapshot {
+  bookId: string;
+  revision: number;
+  document: string;
+  updatedAt: string | null;
+}
+export interface SaveNoteRequest {
+  bookId: string;
+  expectedRevision: number;
+  document: string;
 }
 export interface ImportFailure {
   error: string;

@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validReadingRequest } from '../library/reading.cjs';
 import { validAnnotationRequest } from '../library/annotations.cjs';
+import { validNoteRequest } from '../library/notes.cjs';
 
 /** Only the shell's own top-level document may invoke privileged methods. */
 export function isTrustedSender(
@@ -42,6 +43,11 @@ export function validateRequest(method: string, args: unknown[]): void {
       validJson(args[0]) &&
       withinJsonLimit(args[0]) &&
       validAnnotationRequest(method, args[0])) ||
+    (['loadNote', 'saveNote'].includes(method) &&
+      args.length === 1 &&
+      validJson(args[0]) &&
+      withinJsonLimit(args[0]) &&
+      validNoteRequest(method, args[0])) ||
     ((method === 'version' ||
       method === 'storageStatus' ||
       method === 'libraryList' ||

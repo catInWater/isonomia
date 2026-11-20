@@ -478,6 +478,7 @@ class LibraryManager {
     if (!keepNotes) {
       await this.store.remove(`reading-${book.bookId}`);
       await this.store.remove(`annotations-${book.bookId}`);
+      await this.store.remove(`note-${book.bookId}`);
     }
     await this.store.save('library', { books }, catalog.revision);
     return keepNotes ? books[index] : book;

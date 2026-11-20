@@ -19,6 +19,7 @@ import { bookImageStyle, contentRuns } from './book-content';
 import type { ContentDecoration } from './book-content';
 import { AnnotationPanel, useBookAnnotations } from './annotations';
 import type { AnnotationItem, AnnotationView } from './annotations';
+import { NotePanel } from './notes';
 import {
   comparePositions,
   readSelection,
@@ -1062,6 +1063,7 @@ export function App() {
                 </nav>
               </aside>
             ))}
+          {!focusMode && <NotePanel bookId={opened.book.bookId} />}
           <section className={styles.readingColumn}>
             {!focusMode && (
               <div className={styles.readerToolbar}>

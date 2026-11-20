@@ -9,6 +9,7 @@ import type { Json } from './storage/index.cjs';
 import { LibraryManager } from './library/index.cjs';
 import { ReadingManager } from './library/reading.cjs';
 import { AnnotationsManager } from './library/annotations.cjs';
+import { NotesManager } from './library/notes.cjs';
 
 export default class App {
   // Keep a global reference of the window object, if you don't, the window will
@@ -22,6 +23,7 @@ export default class App {
   static library: InstanceType<typeof LibraryManager> | null = null;
   static reading: InstanceType<typeof ReadingManager> | null = null;
   static annotations: InstanceType<typeof AnnotationsManager> | null = null;
+  static notes: InstanceType<typeof NotesManager> | null = null;
   static libraryRoot = '';
   static storageError = '';
 
@@ -94,6 +96,7 @@ export default class App {
         library: App.library,
         reading: App.reading,
       });
+      App.notes = new NotesManager({ store: App.store, library: App.library });
       App.storageAvailable = true;
     } catch (error) {
       App.storageAvailable = false;
