@@ -9,30 +9,25 @@ import type {
   ReaderLink,
   ReadingPosition,
   ReadingPreferences,
+  ReadingRange,
+  StorageBridge,
 } from '@reader/storage-bridge';
 import styles from './app.module.css';
+import annotationStyles from './annotations.module.css';
 import { makePages, safeBoundary, pageForPosition } from './pagination';
 import { bookImageStyle, contentRuns } from './book-content';
+import type { ContentDecoration } from './book-content';
+import { AnnotationPanel, useBookAnnotations } from './annotations';
+import type { AnnotationItem, AnnotationView } from './annotations';
+import {
+  comparePositions,
+  readSelection,
+  selectionPreview,
+} from './reading-selection';
 
 declare global {
   interface Window {
-    reader: {
-      libraryList(): Promise<BookSummary[]>;
-      libraryCover(bookId: string): Promise<string | null>;
-      libraryImport(): Promise<Array<BookSummary | ImportFailure>>;
-      libraryRemove(id: string, keepNotes: boolean): Promise<BookSummary>;
-      openBook(input: { bookId: string }): Promise<OpenedBook>;
-      readChapter(input: {
-        bookId: string;
-        chapterId: string;
-      }): Promise<ReaderChapter>;
-      saveReading(input: {
-        bookId: string;
-        contentHash: string;
-        position: ReadingPosition;
-        preferences: ReadingPreferences;
-      }): Promise<{ lastReadAt: string }>;
-    };
+    reader: StorageBridge;
   }
 }
 
@@ -101,49 +96,98 @@ function renderImageAwareText(
   instanceKey = '',
   links: ReaderLink[] = [],
   onNavigate?: (target: ReadingPosition) => void,
+  decorations: ContentDecoration[] = [],
+  onHighlight?: (highlightId: string) => void,
 ): ReactNode[] {
-  return contentRuns(text, images, links, startOffset).map((run) => {
-    const image = run.image;
-    const key = `${instanceKey}-${run.offset}`;
-    const content = (
-      <span
-        key={key}
-        data-content-start={run.offset}
-        data-content-length={run.length}
-      >
-        {image ? (
-          isSafeImageDataUrl(image.src) ? (
-            <BookImage image={image} />
+  return contentRuns(text, images, links, startOffset, decorations).map(
+    (run) => {
+      const image = run.image;
+      const key = `${instanceKey}-${run.offset}`;
+      const content = (
+        <span
+          key={key}
+          data-content-start={run.offset}
+          data-content-length={run.length}
+          data-emphasis={run.emphasis}
+        >
+          {image ? (
+            isSafeImageDataUrl(image.src) ? (
+              <BookImage image={image} />
+            ) : (
+              <span
+                className={
+                  image.inline
+                    ? styles.inlineImageFallback
+                    : styles.imageFallback
+                }
+              >
+                {image.alt || '[图片无法显示]'}
+              </span>
+            )
           ) : (
-            <span
-              className={
-                image.inline ? styles.inlineImageFallback : styles.imageFallback
+            run.text
+          )}
+        </span>
+      );
+      const target = run.target;
+      const highlightId = run.highlight?.highlightId;
+      const openHighlight = () => {
+        if (highlightId) onHighlight?.(highlightId);
+      };
+      const highlightAttributes = {
+        'data-highlight-id': highlightId,
+        'data-highlight-color': run.highlight?.color,
+      };
+      if (target && onNavigate)
+        return (
+          <a
+            key={key}
+            className={styles.bookLink}
+            href={`#reader-${target.chapterId}-${target.blockIndex}-${target.offset}`}
+            {...highlightAttributes}
+            title={
+              highlightId ? '打开批注；Alt + 点击可跟随原书链接' : undefined
+            }
+            onClick={(event) => {
+              event.preventDefault();
+              if (window.getSelection()?.isCollapsed === false) return;
+              if (highlightId && !event.altKey) openHighlight();
+              else onNavigate(target);
+            }}
+            onKeyDown={(event) => {
+              if (highlightId && event.altKey && event.key === 'Enter') {
+                event.preventDefault();
+                onNavigate(target);
               }
-            >
-              {image.alt || '[图片无法显示]'}
-            </span>
-          )
-        ) : (
-          run.text
-        )}
-      </span>
-    );
-    return run.target && onNavigate ? (
-      <a
-        key={key}
-        className={styles.bookLink}
-        href={`#reader-${run.target.chapterId}-${run.target.blockIndex}-${run.target.offset}`}
-        onClick={(event) => {
-          event.preventDefault();
-          if (run.target) onNavigate(run.target);
-        }}
-      >
-        {content}
-      </a>
-    ) : (
-      content
-    );
-  });
+            }}
+          >
+            {content}
+          </a>
+        );
+      if (highlightId)
+        return (
+          <span
+            key={key}
+            role="button"
+            tabIndex={0}
+            {...highlightAttributes}
+            title="打开批注"
+            onClick={() => {
+              if (window.getSelection()?.isCollapsed !== false) openHighlight();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openHighlight();
+              }
+            }}
+          >
+            {content}
+          </span>
+        );
+      return content;
+    },
+  );
 }
 
 function BookCover({ book }: { book: BookSummary }) {
@@ -218,6 +262,18 @@ export function App() {
   const [saveFailed, setSaveFailed] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
+  const [annotationView, setAnnotationView] = useState<AnnotationView | null>(
+    null,
+  );
+  const [shelfAnnotations, setShelfAnnotations] = useState<BookSummary | null>(
+    null,
+  );
+  const [selection, setSelection] = useState<ReadingRange | null>(null);
+  const [crossStart, setCrossStart] = useState<ReadingRange | null>(null);
+  const [jumpRange, setJumpRange] = useState<ReadingRange | null>(null);
+  const annotationBook = opened?.book || shelfAnnotations;
+  const annotations = useBookAnnotations(annotationBook);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [viewport, setViewport] = useState({
     width: window.innerWidth,
     height: window.innerHeight,
@@ -228,6 +284,24 @@ export function App() {
   const restorePending = useRef(true);
   const linkFocusPending = useRef(false);
   const focusBeforeMode = useRef<HTMLElement | null>(null);
+
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    if (
+      readingArea.current?.contains(window.getSelection()?.anchorNode ?? null)
+    )
+      window.getSelection()?.removeAllRanges();
+  }, []);
+  useEffect(() => {
+    if (!chapter) return;
+    const onSelection = () => {
+      const area = readingArea.current;
+      if (!area) return;
+      setSelection(readSelection(area, chapter));
+    };
+    document.addEventListener('selectionchange', onSelection);
+    return () => document.removeEventListener('selectionchange', onSelection);
+  }, [chapter]);
 
   const refresh = useCallback(async () => {
     setBooks(await window.reader.libraryList());
@@ -248,15 +322,18 @@ export function App() {
 
   const sorted = useMemo(
     () =>
-      [...books].sort((a, b) => {
-        if (sort === 'title') return a.title.localeCompare(b.title, 'zh-CN');
-        if (sort === 'author') return a.author.localeCompare(b.author, 'zh-CN');
-        if (sort === 'imported')
-          return b.importedAt.localeCompare(a.importedAt);
-        return (b.lastReadAt || b.importedAt).localeCompare(
-          a.lastReadAt || a.importedAt,
-        );
-      }),
+      books
+        .filter((book) => book.fileStatus === 'available')
+        .sort((a, b) => {
+          if (sort === 'title') return a.title.localeCompare(b.title, 'zh-CN');
+          if (sort === 'author')
+            return a.author.localeCompare(b.author, 'zh-CN');
+          if (sort === 'imported')
+            return b.importedAt.localeCompare(a.importedAt);
+          return (b.lastReadAt || b.importedAt).localeCompare(
+            a.lastReadAt || a.importedAt,
+          );
+        }),
     [books, sort],
   );
 
@@ -280,9 +357,43 @@ export function App() {
     }
   };
 
+  const showShelfAnnotations = (book: BookSummary) => {
+    setShelfAnnotations(book);
+    setAnnotationView({ kind: 'list' });
+    requestAnimationFrame(() =>
+      document
+        .getElementById('retained-annotations')
+        ?.scrollIntoView({ block: 'start' }),
+    );
+  };
+
+  const replaceBook = async (book: BookSummary) => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await window.reader.libraryReplace(book.bookId);
+      if (!result) return;
+      setShelfAnnotations(null);
+      setAnnotationView(null);
+      await refresh();
+      setMessage('正文已替换，原划线与批注仍保留。打开书籍可查看定位结果。');
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : '替换正文失败，请重试。',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const removeBook = async (book: BookSummary, keepNotes: boolean) => {
     try {
-      await window.reader.libraryRemove(book.bookId, keepNotes);
+      const removed = await window.reader.libraryRemove(book.bookId, keepNotes);
+      if (keepNotes) showShelfAnnotations(removed);
+      else if (shelfAnnotations?.bookId === book.bookId) {
+        setShelfAnnotations(null);
+        setAnnotationView(null);
+      }
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '删除失败。');
@@ -377,6 +488,10 @@ export function App() {
         ? captureScrollPosition() || position
         : position;
     if (current) await persistReading(current);
+    clearSelection();
+    setCrossStart(null);
+    setJumpRange(null);
+    setAnnotationView(null);
     setOpened(null);
     setChapter(null);
     void refresh();
@@ -414,6 +529,11 @@ export function App() {
         chapterId === result.position.chapterId
           ? result.position
           : { chapterId, blockIndex: 0, offset: 0 };
+      clearSelection();
+      setCrossStart(null);
+      setJumpRange(null);
+      setAnnotationView(null);
+      setShelfAnnotations(null);
       setOpened(result);
       setBooks((items) =>
         items.map((item) =>
@@ -451,19 +571,24 @@ export function App() {
           bookId: opened.book.bookId,
           chapterId,
         });
+        clearSelection();
+        setCrossStart(null);
         setChapter(nextChapter);
         setPageIndex(0);
         restorePending.current = true;
         const next = nextPosition || { chapterId, blockIndex: 0, offset: 0 };
         setPosition(next);
         void persistReading(next);
+        return true;
       } catch (error) {
+        linkFocusPending.current = false;
         setMessage(error instanceof Error ? error.message : '无法打开此章节。');
+        return false;
       } finally {
         setBusy(false);
       }
     },
-    [opened, position, persistReading],
+    [opened, position, persistReading, clearSelection],
   );
 
   const followBookLink = (target: ReadingPosition) => {
@@ -486,6 +611,104 @@ export function App() {
     [chapter, preferences.fontSize, preferences.lineHeight, viewport],
   );
   const pageCount = Math.max(1, pages.length);
+  const selectedRange =
+    selection &&
+    (!crossStart || comparePositions(crossStart.end, selection.start) <= 0)
+      ? { start: crossStart?.start ?? selection.start, end: selection.end }
+      : null;
+  const decorations = useMemo(() => {
+    const byBlock = new Map<number, ContentDecoration[]>();
+    if (!chapter) return byBlock;
+    const add = (
+      range: ReadingRange,
+      detail: Omit<ContentDecoration, 'offset' | 'length'>,
+    ) => {
+      if (
+        range.start.chapterId !== chapter.id ||
+        range.end.chapterId !== chapter.id
+      )
+        return;
+      for (
+        let index = range.start.blockIndex;
+        index <= range.end.blockIndex;
+        index++
+      ) {
+        const offset =
+          index === range.start.blockIndex ? range.start.offset : 0;
+        const end =
+          index === range.end.blockIndex
+            ? range.end.offset
+            : chapter.blocks[index]?.length;
+        if (end === undefined || end <= offset) continue;
+        if (!byBlock.has(index)) byBlock.set(index, []);
+        byBlock.get(index)?.push({ ...detail, offset, length: end - offset });
+      }
+    };
+    for (const item of annotations.snapshot?.items ?? []) {
+      if (item.resolution.status !== 'lost')
+        add(item.resolution.range, {
+          highlightId: item.highlightId,
+          color: item.color,
+        });
+    }
+    if (annotationView?.kind === 'create')
+      add(annotationView.range, { emphasis: 'preview' });
+    if (jumpRange) add(jumpRange, { emphasis: 'jump' });
+    return byBlock;
+  }, [annotations.snapshot, annotationView, chapter, jumpRange]);
+
+  const showHighlight = (highlightId: string) => {
+    if (annotations.busy) return;
+    setFocusMode(false);
+    setAnnotationView({ kind: 'detail', highlightId });
+  };
+  const jumpToAnnotation = async ({ resolution }: AnnotationItem) => {
+    if (resolution.status === 'lost') return;
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
+    const { range } = resolution;
+    linkFocusPending.current = true;
+    setJumpRange(range);
+    if (!(await loadChapter(range.start.chapterId, range.start))) {
+      setJumpRange(null);
+      return;
+    }
+    jumpTimer.current = setTimeout(() => setJumpRange(null), 1800);
+  };
+  const closeAnnotations = () => {
+    setAnnotationView(null);
+    setShelfAnnotations(null);
+    if (opened)
+      requestAnimationFrame(() =>
+        document
+          .getElementById('reader-annotations')
+          ?.focus({ preventScroll: true }),
+      );
+  };
+
+  const writeAnnotation = () => {
+    if (!chapter || !selectedRange) return;
+    setAnnotationView({
+      kind: 'create',
+      range: selectedRange,
+      quote: selectionPreview(chapter, selectedRange),
+    });
+    clearSelection();
+    setCrossStart(null);
+  };
+  const quickHighlight = async () => {
+    if (!selectedRange || !opened) return;
+    const result = await annotations.change({
+      kind: 'create',
+      color: 'yellow',
+      text: '',
+      range: selectedRange,
+      contentHash: opened.book.contentHash,
+    });
+    if (result) {
+      clearSelection();
+      setCrossStart(null);
+    } else setAnnotationView((current) => current ?? { kind: 'list' });
+  };
 
   useEffect(() => {
     if (!chapter || !position || !restorePending.current) return;
@@ -494,11 +717,14 @@ export function App() {
       restorePending.current = false;
       if (linkFocusPending.current)
         requestAnimationFrame(() => {
-          document
-            .querySelector<HTMLElement>(
-              `[data-page-block="${position.blockIndex}"]`,
-            )
-            ?.focus({ preventScroll: true });
+          const target = readingArea.current?.querySelector<HTMLElement>(
+            `[data-block-index="${position.blockIndex}"]`,
+          );
+          const emphasized = target?.querySelector<HTMLElement>(
+            '[data-emphasis="jump"]',
+          );
+          emphasized?.scrollIntoView({ block: 'center' });
+          target?.focus({ preventScroll: true });
           linkFocusPending.current = false;
         });
       return;
@@ -601,7 +827,11 @@ export function App() {
     if (current) setPosition(current);
     setPreferences(next);
     restorePending.current = true;
-    if (patch.mode && patch.mode !== previousMode) setPageIndex(0);
+    if (patch.mode && patch.mode !== previousMode) {
+      setPageIndex(0);
+      clearSelection();
+      setCrossStart(null);
+    }
     if (current) void persistReading(current, next);
   };
 
@@ -649,6 +879,7 @@ export function App() {
       }
       const nextPage = pageIndex + direction;
       if (nextPage >= 0 && nextPage < pageCount) {
+        clearSelection();
         setPageIndex(nextPage);
         const first = pages[nextPage]?.[0];
         if (first)
@@ -693,13 +924,21 @@ export function App() {
       queueSave,
       loadChapter,
       preferences.mode,
+      clearSelection,
     ],
   );
 
   useEffect(() => {
     if (!opened) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing)
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        event.defaultPrevented
+      )
         return;
       const target = event.target as HTMLElement | null;
       if (
@@ -734,6 +973,7 @@ export function App() {
     () => () => {
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
       if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (jumpTimer.current) clearTimeout(jumpTimer.current);
     },
     [],
   );
@@ -791,25 +1031,37 @@ export function App() {
           </header>
         )}
         <div className={styles.readerLayout} style={typographyStyle}>
-          {!focusMode && (
-            <aside className={styles.toc} aria-label="目录">
-              <p>目录</p>
-              <nav id="reader-toc" tabIndex={-1}>
-                {opened.book.chapters.map((item, index) => (
-                  <button
-                    key={item.id}
-                    className={
-                      item.id === chapter.id ? styles.activeChapter : ''
-                    }
-                    onClick={() => void loadChapter(item.id)}
-                  >
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    {item.title}
-                  </button>
-                ))}
-              </nav>
-            </aside>
-          )}
+          {!focusMode &&
+            (annotationView ? (
+              <aside className={styles.annotationAside}>
+                <AnnotationPanel
+                  book={opened.book}
+                  controller={annotations}
+                  view={annotationView}
+                  setView={setAnnotationView}
+                  close={closeAnnotations}
+                  jump={jumpToAnnotation}
+                />
+              </aside>
+            ) : (
+              <aside className={styles.toc} aria-label="目录">
+                <p>目录</p>
+                <nav id="reader-toc" tabIndex={-1}>
+                  {opened.book.chapters.map((item, index) => (
+                    <button
+                      key={item.id}
+                      className={
+                        item.id === chapter.id ? styles.activeChapter : ''
+                      }
+                      onClick={() => void loadChapter(item.id)}
+                    >
+                      <span>{String(index + 1).padStart(2, '0')}</span>
+                      {item.title}
+                    </button>
+                  ))}
+                </nav>
+              </aside>
+            ))}
           <section className={styles.readingColumn}>
             {!focusMode && (
               <div className={styles.readerToolbar}>
@@ -932,6 +1184,69 @@ export function App() {
                     专注
                   </button>
                 </div>
+                <div className={styles.annotationActions} aria-label="选区操作">
+                  <button
+                    id="reader-annotations"
+                    aria-expanded={!!annotationView}
+                    disabled={annotations.busy}
+                    onClick={() =>
+                      annotationView
+                        ? closeAnnotations()
+                        : setAnnotationView({ kind: 'list' })
+                    }
+                  >
+                    全书划线
+                  </button>
+                  {selectedRange && (
+                    <>
+                      <button
+                        disabled={!annotations.canChange || busy}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void quickHighlight()}
+                      >
+                        划线
+                      </button>
+                      <button
+                        disabled={!annotations.canChange || busy}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={writeAnnotation}
+                      >
+                        写批注
+                      </button>
+                      {!crossStart &&
+                        preferences.mode === 'paginated' &&
+                        pageIndex + 1 < pageCount && (
+                          <button
+                            disabled={busy}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setCrossStart(selectedRange);
+                              stepPage(1);
+                            }}
+                          >
+                            跨页选取
+                          </button>
+                        )}
+                    </>
+                  )}
+                  {crossStart ? (
+                    <>
+                      <span role="status">
+                        已保留起点，请在同章后续页选择终点。
+                      </span>
+                      <button
+                        onClick={() => {
+                          setCrossStart(null);
+                          clearSelection();
+                        }}
+                      >
+                        取消跨页选取
+                      </button>
+                    </>
+                  ) : (
+                    !selectedRange && <span>选中文字后可划线或写批注</span>
+                  )}
+                </div>
               </div>
             )}
             <div className={styles.chapterHeading}>
@@ -940,9 +1255,10 @@ export function App() {
             </div>
             {preferences.mode === 'scroll' ? (
               <article
-                ref={readingArea as React.RefObject<HTMLElement>}
+                ref={readingArea}
                 className={styles.scrollContent}
                 style={typographyStyle}
+                aria-label="正文"
               >
                 {chapter.blocks.map((block, index) => (
                   <p
@@ -962,6 +1278,8 @@ export function App() {
                         (link) => link.blockIndex === index,
                       ),
                       followBookLink,
+                      decorations.get(index),
+                      showHighlight,
                     )}
                     {!block && ' '}
                   </p>
@@ -970,13 +1288,16 @@ export function App() {
             ) : (
               <>
                 <article
+                  ref={readingArea}
                   className={styles.pageContent}
                   style={typographyStyle}
+                  aria-label="正文"
                   aria-live="polite"
                 >
                   {(pages[pageIndex] || []).map((part, index) => (
                     <p
                       key={`${part.blockIndex}-${part.start}-${index}`}
+                      data-block-index={part.blockIndex}
                       data-page-block={part.blockIndex}
                       tabIndex={-1}
                     >
@@ -994,6 +1315,8 @@ export function App() {
                           (link) => link.blockIndex === part.blockIndex,
                         ),
                         followBookLink,
+                        decorations.get(part.blockIndex),
+                        showHighlight,
                       )}
                     </p>
                   ))}
@@ -1066,7 +1389,7 @@ export function App() {
           <p className={styles.eyebrow}>本地阅读器</p>
           <h1>书架</h1>
           <p className={styles.muted}>
-            {books.length ? `${books.length} 本书` : '导入一本书，开始阅读。'}
+            {sorted.length ? `${sorted.length} 本书` : '导入一本书，开始阅读。'}
           </p>
         </div>
         <button
@@ -1110,6 +1433,29 @@ export function App() {
           {message}
         </p>
       )}
+      {shelfAnnotations && annotationView && (
+        <div
+          className={annotationStyles.libraryPanel}
+          id="retained-annotations"
+        >
+          <h2>{shelfAnnotations.title}</h2>
+          <button
+            className={styles.bookSecondary}
+            disabled={busy || annotations.busy}
+            onClick={() => void replaceBook(shelfAnnotations)}
+          >
+            替换正文…
+          </button>
+          <AnnotationPanel
+            key={shelfAnnotations.bookId}
+            book={shelfAnnotations}
+            controller={annotations}
+            view={annotationView}
+            setView={setAnnotationView}
+            close={closeAnnotations}
+          />
+        </div>
+      )}
       {removing && (
         <div
           className={styles.backdrop}
@@ -1130,7 +1476,7 @@ export function App() {
               className={styles.primary}
               onClick={() => void removeBook(removing, true)}
             >
-              仅移除书文件，保留笔记
+              仅移除书文件，保留笔记和批注
             </button>
             <button
               className={styles.danger}
@@ -1174,16 +1520,50 @@ export function App() {
                   </small>
                 </div>
               </button>
-              <button
-                className={styles.remove}
-                title={`删除${book.title}`}
-                onClick={() => setRemoving(book)}
-              >
-                删除
-              </button>
+              <div className={styles.bookSecondary}>
+                <button
+                  onClick={() => showShelfAnnotations(book)}
+                  disabled={annotations.busy}
+                >
+                  划线与批注
+                </button>
+                <button
+                  className={styles.remove}
+                  title={`删除${book.title}`}
+                  onClick={() => setRemoving(book)}
+                >
+                  删除
+                </button>
+              </div>
             </article>
           ))}
         </section>
+      )}
+      {books.some((book) => book.fileStatus === 'removed') && (
+        <details className={annotationStyles.libraryRetained}>
+          <summary>已移除书文件（保留的笔记和批注）</summary>
+          <ul>
+            {books
+              .filter((book) => book.fileStatus === 'removed')
+              .map((book) => (
+                <li key={book.bookId} className={styles.bookSecondary}>
+                  <strong>{book.title}</strong>
+                  <button
+                    onClick={() => showShelfAnnotations(book)}
+                    disabled={annotations.busy}
+                  >
+                    查看保留批注
+                  </button>
+                  <button
+                    className={styles.remove}
+                    onClick={() => setRemoving(book)}
+                  >
+                    删除保留内容
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </details>
       )}
     </main>
   );

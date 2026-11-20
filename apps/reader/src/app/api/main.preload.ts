@@ -9,6 +9,7 @@ import type {
   RecoveryStatus,
   StorageBridge,
   SaveReadingRequest,
+  AnnotationRequest,
 } from '@reader/storage-bridge';
 
 contextBridge.exposeInMainWorld(
@@ -43,5 +44,13 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.invoke('reader:readChapter', request),
     saveReading: (request: SaveReadingRequest) =>
       ipcRenderer.invoke('reader:saveReading', request),
+    libraryReplace: (bookId: string) =>
+      ipcRenderer.invoke('reader:libraryReplace', bookId),
+    listAnnotations: (request: { bookId: string }) =>
+      ipcRenderer.invoke('reader:listAnnotations', request),
+    changeAnnotation: (request: AnnotationRequest) =>
+      ipcRenderer.invoke('reader:changeAnnotation', request),
+    copyAnnotation: (request: { bookId: string; highlightId: string }) =>
+      ipcRenderer.invoke('reader:copyAnnotation', request),
   } satisfies StorageBridge),
 );

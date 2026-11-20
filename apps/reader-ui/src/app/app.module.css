@@ -187,6 +187,34 @@ select:focus-visible {
   text-underline-offset: 0.18em;
   cursor: pointer;
 }
+.readerShell [data-highlight-id] {
+  --mark-color: #d7a523;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--mark-color) 37%, transparent);
+  cursor: pointer;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.readerShell [data-highlight-color='green'] {
+  --mark-color: #5fa774;
+}
+.readerShell [data-highlight-color='pink'] {
+  --mark-color: #d36c9f;
+}
+.readerShell [data-highlight-color='blue'] {
+  --mark-color: #608fce;
+}
+.readerShell [data-highlight-id]:focus-visible {
+  outline: 2px solid currentColor;
+}
+.readerShell [data-emphasis='preview'] {
+  background: color-mix(in srgb, #5b94cb 37%, transparent);
+}
+.readerShell [data-emphasis='jump'] {
+  background: color-mix(in srgb, #d7a523 65%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 0.17em;
+}
 .bookLink:hover,
 .bookLink:focus-visible {
   text-decoration-thickness: 2px;
@@ -263,6 +291,27 @@ select:focus-visible {
 .list .remove {
   flex: 0 0 auto;
   margin: 0 8px 0 0;
+}
+.bookSecondary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-block: 8px;
+}
+.bookSecondary button:not(.remove),
+button.bookSecondary {
+  padding: 4px 7px;
+  border: 1px solid #cfd6cf;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.bookSecondary .remove {
+  margin: 0;
 }
 .empty {
   display: flex;
@@ -351,6 +400,7 @@ select:focus-visible {
 }
 
 .readerShell {
+  --reader-header-height: 66px;
   --reader-bg: #f5f3ed;
   --reader-paper: #fffefa;
   --reader-ink: #292b28;
@@ -382,7 +432,8 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 20px;
-  min-height: 66px;
+  box-sizing: border-box;
+  min-height: var(--reader-header-height);
   padding: 10px clamp(16px, 4vw, 52px);
   border-bottom: 1px solid var(--reader-line);
   background: var(--reader-paper);
@@ -428,9 +479,10 @@ select:focus-visible {
   margin: 0 auto;
   padding: 28px clamp(16px, 4vw, 52px) 16px;
 }
-.toc {
+.toc,
+.annotationAside {
   position: sticky;
-  top: 94px;
+  top: calc(var(--reader-header-height) + 28px);
   align-self: start;
   max-height: calc(100vh - 120px);
   overflow: auto;
@@ -479,7 +531,7 @@ select:focus-visible {
 .readerToolbar {
   position: sticky;
   z-index: 2;
-  top: 66px;
+  top: var(--reader-header-height);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -489,6 +541,33 @@ select:focus-visible {
   border-radius: 7px;
   background: var(--reader-paper);
   box-shadow: 0 3px 14px rgb(0 0 0 / 4%);
+}
+.annotationActions {
+  display: flex;
+  flex: 1 0 100%;
+  min-height: 30px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--reader-ink);
+  font-size: 12px;
+}
+.annotationActions button {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--reader-line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.annotationActions button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.annotationActions button[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--reader-ink) 9%, transparent);
 }
 .modeSwitch,
 .readingControls,
@@ -670,7 +749,6 @@ select:focus-visible {
     gap: 20px;
   }
   .readerToolbar {
-    top: 66px;
     gap: 8px;
   }
   .readingControls {
@@ -703,8 +781,10 @@ select:focus-visible {
   .cover {
     width: 100%;
   }
+  .readerShell {
+    --reader-header-height: 58px;
+  }
   .readerHeader {
-    min-height: 58px;
     gap: 10px;
     padding-inline: 12px;
   }
@@ -713,11 +793,17 @@ select:focus-visible {
     min-height: calc(100vh - 100px);
     padding: 12px 12px 8px;
   }
-  .toc {
+  .toc,
+  .annotationAside {
     position: static;
-    max-height: 118px;
     margin-bottom: 12px;
     padding: 0 0 8px;
+  }
+  .toc {
+    max-height: 118px;
+  }
+  .annotationAside {
+    max-height: max(160px, 46vh);
   }
   .toc > p {
     margin-bottom: 5px;

@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validReadingRequest } from '../library/reading.cjs';
+import { validAnnotationRequest } from '../library/annotations.cjs';
 
 /** Only the shell's own top-level document may invoke privileged methods. */
 export function isTrustedSender(
@@ -34,6 +35,13 @@ export function validateRequest(method: string, args: unknown[]): void {
       validJson(args[0]) &&
       withinJsonLimit(args[0]) &&
       validReadingRequest(method, args[0])) ||
+    (['listAnnotations', 'changeAnnotation', 'copyAnnotation'].includes(
+      method,
+    ) &&
+      args.length === 1 &&
+      validJson(args[0]) &&
+      withinJsonLimit(args[0]) &&
+      validAnnotationRequest(method, args[0])) ||
     ((method === 'version' ||
       method === 'storageStatus' ||
       method === 'libraryList' ||
@@ -44,7 +52,9 @@ export function validateRequest(method: string, args: unknown[]): void {
       args.length === 2 &&
       validBookId(args[0]) &&
       typeof args[1] === 'boolean') ||
-    (method === 'libraryOpen' && args.length === 1 && validBookId(args[0])) ||
+    ((method === 'libraryOpen' || method === 'libraryReplace') &&
+      args.length === 1 &&
+      validBookId(args[0])) ||
     (method === 'load' && args.length === 1 && validRecordId(args[0])) ||
     (method === 'save' &&
       args.length === 3 &&

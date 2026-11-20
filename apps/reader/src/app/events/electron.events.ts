@@ -1,4 +1,5 @@
-import { app, dialog, ipcMain } from 'electron';
+import { app, clipboard, dialog, ipcMain } from 'electron';
+import type { AnnotationRequest } from '@reader/storage-bridge';
 import App from '../app';
 import { isTrustedSender, validateRequest } from '../api/security';
 
@@ -24,6 +25,10 @@ export default class ElectronEvents {
       'openBook',
       'readChapter',
       'saveReading',
+      'libraryReplace',
+      'listAnnotations',
+      'changeAnnotation',
+      'copyAnnotation',
     ]) {
       ipcMain.handle(`reader:${method}`, async (event, ...args: unknown[]) => {
         if (
@@ -59,10 +64,52 @@ export default class ElectronEvents {
         }
         if (method === 'version') return app.getVersion();
         if (method === 'libraryList')
-          return ((await App.library?.list()) ?? []).map(publicBook);
-        if (method === 'libraryCover')
-          return App.library?.cover(args[0] as string) ?? null;
+          return ((await App.library?.list(true)) ?? []).map(publicBook);
+        if (
+          method === 'listAnnotations' ||
+          method === 'changeAnnotation' ||
+          method === 'copyAnnotation'
+        ) {
+          if (!App.annotations) throw new Error('本地批注暂不可用。');
+          if (method === 'listAnnotations')
+            return App.annotations.list(args[0] as { bookId: string });
+          if (method === 'changeAnnotation')
+            return App.annotations.change(args[0] as AnnotationRequest);
+          const text = await App.annotations.copyText(
+            args[0] as { bookId: string; highlightId: string },
+          );
+          clipboard.writeText(text);
+          return;
+        }
+        if (method === 'libraryReplace') {
+          const { library, reading } = App;
+          const bookId = args[0] as string;
+          if (!library || !reading) throw new Error('书架暂不可用。');
+          const book = await library.findBook(bookId);
+          if (!book) throw new Error('找不到这本书。');
+          const result = await dialog.showOpenDialog(App.mainWindow!, {
+            title: '选择替换正文（划线和批注会保留）',
+            properties: ['openFile'],
+            filters: [
+              { name: book.format.toUpperCase(), extensions: [book.format] },
+            ],
+          });
+          const sourcePath = result.filePaths[0];
+          if (result.canceled || !sourcePath) return null;
+          return publicBook(
+            await reading.runExclusive(() =>
+              library.replaceFile(bookId, sourcePath),
+            ),
+          );
+        }
+        if (method === 'libraryCover') {
+          const { library, reading } = App;
+          if (!library || !reading) return null;
+          return reading.runExclusive(() => library.cover(args[0] as string));
+        }
         if (method === 'libraryImport') {
+          const { library, reading } = App;
+          if (!library || !reading) throw new Error('书架暂不可用。');
           const result = await dialog.showOpenDialog(App.mainWindow!, {
             title: '导入书籍',
             properties: ['openFile', 'multiSelections'],
@@ -110,10 +157,14 @@ export default class ElectronEvents {
           }
           return imported;
         }
-        if (method === 'libraryRemove')
+        if (method === 'libraryRemove') {
+          if (!App.library || !App.reading) throw new Error('书架暂不可用。');
           return publicBook(
-            await App.library!.remove(args[0] as string, args[1] as boolean),
+            await App.reading.runExclusive(() =>
+              App.library!.remove(args[0] as string, args[1] as boolean),
+            ),
           );
+        }
         if (method === 'storageStatus') {
           if (!App.store) {
             return {

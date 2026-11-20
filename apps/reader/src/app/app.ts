@@ -8,6 +8,7 @@ import { DurableStore } from './storage/index.cjs';
 import type { Json } from './storage/index.cjs';
 import { LibraryManager } from './library/index.cjs';
 import { ReadingManager } from './library/reading.cjs';
+import { AnnotationsManager } from './library/annotations.cjs';
 
 export default class App {
   // Keep a global reference of the window object, if you don't, the window will
@@ -20,6 +21,7 @@ export default class App {
   static store: InstanceType<typeof DurableStore> | null = null;
   static library: InstanceType<typeof LibraryManager> | null = null;
   static reading: InstanceType<typeof ReadingManager> | null = null;
+  static annotations: InstanceType<typeof AnnotationsManager> | null = null;
   static libraryRoot = '';
   static storageError = '';
 
@@ -86,6 +88,11 @@ export default class App {
         root,
         store: App.store,
         library: App.library,
+      });
+      App.annotations = new AnnotationsManager({
+        store: App.store,
+        library: App.library,
+        reading: App.reading,
       });
       App.storageAvailable = true;
     } catch (error) {

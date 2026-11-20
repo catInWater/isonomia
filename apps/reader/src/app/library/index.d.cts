@@ -25,7 +25,9 @@ export class LibraryManager {
       save(id: string, data: Json, revision: number): Promise<unknown>;
     };
   });
-  list(): Promise<BookSummary[]>;
+  list(includeRemoved?: boolean): Promise<BookSummary[]>;
+  findBook(bookId: string): Promise<BookSummary | undefined>;
+  replaceFile(bookId: string, sourcePath: string): Promise<BookSummary>;
   cover(bookId: string): Promise<string | null>;
   importFile(sourcePath: string, keepDuplicate?: boolean): Promise<BookSummary>;
   remove(bookId: string, keepNotes: boolean): Promise<BookSummary>;

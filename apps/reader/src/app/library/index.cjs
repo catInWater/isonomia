@@ -27,6 +27,15 @@ function comparablePath(value) {
   const normalized = value.startsWith('\\\\?\\') ? value.slice(4) : value;
   return normalized.toLowerCase();
 }
+function validStoredBookName({ bookId, format, fileName }) {
+  return (
+    typeof bookId === 'string' &&
+    /^book-[a-z0-9]{32}$/.test(bookId) &&
+    ['epub', 'txt'].includes(format) &&
+    typeof fileName === 'string' &&
+    new RegExp(`^${bookId}(?:-[a-f0-9]{32})?\\.${format}$`).test(fileName)
+  );
+}
 function decodeTxt(buffer) {
   if (
     buffer.length >= 3 &&
@@ -97,10 +106,35 @@ class LibraryManager {
     const record = await this.store.load('library');
     return record || { revision: 0, data: { books: [] } };
   }
-  async list() {
+  async list(includeRemoved = false) {
     return (await this._catalog()).data.books.filter(
-      (book) => book.fileStatus === 'available',
+      (book) => includeRemoved || book.fileStatus === 'available',
     );
+  }
+  async findBook(bookId) {
+    return (await this._catalog()).data.books.find(
+      (book) => book.bookId === bookId,
+    );
+  }
+  async _booksDirectory(create = false) {
+    const directory = path.join(this.root, 'books');
+    if (create) await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    const realRoot = await fs.realpath(this.root).catch(() => '');
+    const realDirectory = await fs.realpath(directory).catch(() => '');
+    const stat = await fs.lstat(directory).catch((error) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (!stat && !create) return null;
+    if (
+      !stat?.isDirectory() ||
+      stat.isSymbolicLink() ||
+      !realRoot ||
+      !realDirectory ||
+      comparablePath(path.dirname(realDirectory)) !== comparablePath(realRoot)
+    )
+      fail('UNSAFE_PATH', '书籍目录路径无效，未执行文件操作。');
+    return directory;
   }
   async _coverDirectory(create = false) {
     const directory = path.resolve(this.root, 'covers');
@@ -148,13 +182,12 @@ class LibraryManager {
     if (duplicate && !keepDuplicate)
       fail('DUPLICATE', `这本书已存在：${duplicate.title}。`);
     const bookId = `book-${randomUUID().replaceAll('-', '')}`;
-    const destination = path.join(this.root, 'books', `${bookId}${extension}`);
+    const destination = path.join(
+      await this._booksDirectory(true),
+      `${bookId}${extension}`,
+    );
     let coverPath = null;
     try {
-      await fs.mkdir(path.dirname(destination), {
-        recursive: true,
-        mode: 0o700,
-      });
       await fs.writeFile(destination, bytes, { flag: 'wx', mode: 0o600 });
       if (parsed.cover) {
         const coverDirectory = await this._coverDirectory(true);
@@ -196,14 +229,91 @@ class LibraryManager {
     }
     return book;
   }
-  async _readStoredBook(book) {
+  async replaceFile(bookId, sourcePath) {
+    const catalog = await this._catalog();
+    const book = catalog.data.books.find((item) => item.bookId === bookId);
+    if (!book || !validStoredBookName(book))
+      fail('NOT_FOUND', '找不到这本书。');
     if (
-      !/^book-[a-z0-9]{32}$/.test(book.bookId) ||
-      !['epub', 'txt'].includes(book.format) ||
-      book.fileName !== `${book.bookId}.${book.format}`
+      !path.isAbsolute(sourcePath) ||
+      path.extname(sourcePath).toLowerCase() !== `.${book.format}`
     )
-      return null;
-    const directory = path.resolve(this.root, 'books');
+      fail('UNSUPPORTED_FORMAT', '请选择与原书格式相同的文件。');
+    const source = await fs.open(sourcePath, 'r');
+    let bytes;
+    try {
+      const stat = await source.stat();
+      if (!stat.isFile() || stat.size > MAX_BYTES)
+        fail('CONTENT_LIMIT', '请选择不超过 32 MiB 的书籍。');
+      const buffer = Buffer.alloc(stat.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const { bytesRead } = await source.read(
+          buffer,
+          size,
+          buffer.length - size,
+          size,
+        );
+        if (!bytesRead) break;
+        size += bytesRead;
+      }
+      if (size !== stat.size)
+        fail('CONTENT_CHANGED', '选择的文件正在变化，请稍后重试。');
+      bytes = buffer.subarray(0, size);
+    } finally {
+      await source.close();
+    }
+    const parsed =
+      book.format === 'epub' ? safeParseEpub(bytes) : parseTxt(bytes);
+    const contentHash = createHash('sha256').update(bytes).digest('hex');
+    const fileName = `${bookId}-${randomUUID().replaceAll('-', '')}.${book.format}`;
+    const directory = await this._booksDirectory(true);
+    const destination = path.join(directory, fileName);
+    const handle = await fs.open(destination, 'wx', 0o600);
+    try {
+      try {
+        await handle.writeFile(bytes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (process.platform !== 'win32') {
+        const dir = await fs.open(directory, 'r');
+        try {
+          await dir.sync();
+        } finally {
+          await dir.close();
+        }
+      }
+    } catch (error) {
+      await fs.rm(destination, { force: true }).catch(() => {});
+      throw error;
+    }
+    const next = {
+      ...book,
+      fileStatus: 'available',
+      fileName,
+      contentHash,
+      chapters: parsed.chapters.map(({ id, title }) => ({ id, title })),
+      encoding: parsed.encoding || null,
+    };
+    // An unacknowledged save may already have published the new catalog. Keep
+    // the checked copy in that case, and retain older copies for catalog recovery.
+    await this.store.save(
+      'library',
+      {
+        books: catalog.data.books.map((item) =>
+          item.bookId === bookId ? next : item,
+        ),
+      },
+      catalog.revision,
+    );
+    return next;
+  }
+  async _readStoredBook(book) {
+    if (!validStoredBookName(book)) return null;
+    const directory = await this._booksDirectory();
+    if (!directory) return null;
     const file = path.resolve(directory, book.fileName);
     if (path.dirname(file) !== directory) return null;
     const realRoot = await fs.realpath(this.root).catch(() => '');
@@ -340,30 +450,9 @@ class LibraryManager {
     );
     if (index < 0) fail('NOT_FOUND', '找不到这本书。');
     const book = catalog.data.books[index];
-    if (
-      !/^book-[a-z0-9]{32}$/.test(book.bookId) ||
-      !['epub', 'txt'].includes(book.format) ||
-      book.fileName !== `${book.bookId}.${book.format}`
-    )
+    if (!validStoredBookName(book))
       fail('INVALID_BOOK', '书籍文件记录无效，未执行删除。');
-    const booksDirectory = path.resolve(this.root, 'books');
-    const bookPath = path.resolve(
-      booksDirectory,
-      `${book.bookId}.${book.format}`,
-    );
-    if (path.dirname(bookPath) !== booksDirectory)
-      fail('INVALID_BOOK', '书籍文件路径无效，未执行删除。');
-    const realRoot = await fs.realpath(this.root).catch(() => '');
-    const realBooksDirectory = await fs
-      .realpath(booksDirectory)
-      .catch(() => '');
-    if (
-      !realRoot ||
-      !realBooksDirectory ||
-      comparablePath(path.dirname(realBooksDirectory)) !==
-        comparablePath(realRoot)
-    )
-      fail('INVALID_BOOK', '书籍目录路径无效，未执行删除。');
+    const booksDirectory = await this._booksDirectory();
     const coversDirectory = await this._coverDirectory();
     const books = keepNotes
       ? [...catalog.data.books]
@@ -375,15 +464,21 @@ class LibraryManager {
         removedAt: new Date().toISOString(),
       };
     // Keep catalog and reading state available for retry until private-file cleanup succeeds.
-    if (book.fileName)
-      await fs.rm(path.join(this.root, 'books', book.fileName), {
-        force: true,
-      });
+    if (booksDirectory) {
+      const ownedFiles = (await fs.readdir(booksDirectory)).filter((fileName) =>
+        validStoredBookName({ ...book, fileName }),
+      );
+      for (const fileName of ownedFiles)
+        await fs.rm(path.join(booksDirectory, fileName), { force: true });
+    }
     if (coversDirectory)
       await fs.rm(path.join(coversDirectory, `${book.bookId}.img`), {
         force: true,
       });
-    if (!keepNotes) await this.store.remove(`reading-${book.bookId}`);
+    if (!keepNotes) {
+      await this.store.remove(`reading-${book.bookId}`);
+      await this.store.remove(`annotations-${book.bookId}`);
+    }
     await this.store.save('library', { books }, catalog.revision);
     return keepNotes ? books[index] : book;
   }
@@ -394,4 +489,6 @@ module.exports = {
   parseEpub: safeParseEpub,
   parseTxt,
   decodeTxt,
+  comparablePath,
+  validStoredBookName,
 };

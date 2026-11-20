@@ -42,9 +42,10 @@ To run only the web UI at http://localhost:4200:
 npm exec -- nx serve reader-ui
 ```
 
-The shell currently presents a minimal Chinese-language startup/status view. It
-is not yet a library, book importer or implemented reader; user-interface and
-product feature acceptance is pending.
+The app provides a local EPUB/TXT library, safe chapter-based reading, saved
+reading progress and typography, plus phase-3 source anchors, colored highlights
+and annotations. Product acceptance remains in progress; see the ticket status and
+platform caveats below.
 
 ## Build and check
 
@@ -59,7 +60,7 @@ npm exec -- nx run-many -t lint typecheck -p reader-ui reader
 npm exec -- nx run reader:test
 
 # Check local Markdown links and specification/ticket references
-node tools/validate-specs.cjs
+npm exec -- nx run reader:spec-check
 
 # Verify TypeScript project references
 npm exec -- nx sync:check
@@ -69,9 +70,9 @@ Renderer output: `dist/apps/reader-ui`. Electron output: `dist/apps/reader`.
 The shell uses localhost in development and the sibling renderer directory for
 production/file loading. `sandbox`, `webSecurity` and `contextIsolation` are
 enabled; `nodeIntegration` and webviews are disabled. The isolated preload bridge
-exposes only app version, storage status, and schema-validated record read/write
-and recovery methods; the renderer does not receive raw IPC, filesystem paths or
-arbitrary filesystem/network access.
+exposes schema-validated storage, library, reading and annotation methods. File
+selection and clipboard writes stay in the main process; the renderer does not
+receive raw IPC, filesystem paths or arbitrary filesystem/network access.
 Production requests are limited to bundled files beneath the renderer directory;
 permissions, downloads, pop-up windows and navigation are denied. In development
 only the renderer's configured local origin is permitted. This is a narrow shell
@@ -92,23 +93,50 @@ negative cases, byte sizes and SHA-256 checksums are in
 ## Specification, CI and acceptance status
 
 Architecture and phase-zero trade-offs are recorded in
-[ADR-0001](.claude/docs/adr/0001-phase-zero-foundation.md); scope proposals remain
-pending user confirmation in the specification decision table.
+[ADR-0001](.claude/docs/adr/0001-phase-zero-foundation.md), the reading adapter in
+[ADR-0002](.claude/docs/adr/0002-reading-adapter.md), and source anchors and
+annotations in [ADR-0003](.claude/docs/adr/0003-source-anchors.md). Remaining scope
+proposals are tracked in the specification decision table.
 
 The phase-zero scope defaults in `.claude/docs/specs/README.md` are engineering
-baselines, not user-approved product decisions. D-02–D-08 still require the user
-confirmation, or explicit deferral, recorded by T-000 before affected
-specifications can be marked ready. T-000 through T-003 remain in progress until
+baselines, not user-approved product decisions. D-02 confirms both scroll and
+paginated reading. Other open decisions still require user confirmation or
+explicit deferral, recorded by T-000 before affected specifications can be marked ready. T-000 through T-003 remain in progress until
 their ticket acceptance evidence is complete.
 
 CI is configured in `.github/workflows/ci.yml`; required branch protection/check
 configuration is external repository administration and has not been inspected or
 verified. The workflow's successful run is not evidence that branch protection is
 enabled. No Windows installation/start/quit/uninstall smoke test or protected-data
-retention check has been performed here. There are no application screenshots or
-measured performance results; D-08's measurement conditions are a proposal, not
-benchmark data. No claim of Windows, functional, accessibility, backup-recovery or
-performance acceptance should be inferred from a Linux build or the CI configuration.
+retention check has been performed here. Linux production Electron smoke checks
+exercise highlight creation/editing, two-way jumps, sorting, delete/undo,
+same-chapter cross-page selections, restart, replacement fallback/lost states and
+retained annotations after file removal. They use a throwaway profile and synthetic
+text under a headless Wayland compositor, with the renderer sandbox retained;
+the file dialog response is supplied by the test harness. These checks do not
+replace Windows UI or installer acceptance. D-08's measurement conditions remain
+a proposal, not benchmark data; no performance or full product acceptance should
+be inferred from a Linux build or the CI configuration.
+
+## Highlights and annotations
+
+Select text in the reader, then choose **划线** for a yellow highlight or
+**写批注** to enter a note and choose its color. Click a highlight to edit it;
+**全书划线** lists this book's entries by chapter or creation time. Entries can
+jump back to the source, copy the quote/citation/note, or be deleted and restored
+with **撤销删除**. For a highlight overlapping a book link, Alt-click follows the
+book's original link instead of opening the annotation.
+
+In paginated mode, select the beginning of a range and choose **跨页选取**;
+select its endpoint on a later page of the same chapter, then highlight or write a
+note. Cross-chapter selection remains deferred pending D-07.
+
+On the shelf, **划线与批注 → 替换正文…** replaces a book's private text copy
+without changing its book ID or saved anchors. A unique quote can relocate;
+ambiguous or missing text is shown as **位置丢失**. Removing only the book file
+keeps annotations accessible in the retained-content section. Copying a lost
+annotation still includes its original quote, citation and note; batch/file export
+belongs to phase 6.
 
 ## Packaging
 

@@ -1,9 +1,18 @@
 import type { CSSProperties } from 'react';
 import type {
+  HighlightColor,
   ReaderImage,
   ReaderLink,
   ReadingPosition,
 } from '@reader/storage-bridge';
+
+export type ContentDecoration = {
+  offset: number;
+  length: number;
+  highlightId?: string;
+  color?: HighlightColor;
+  emphasis?: 'preview' | 'jump';
+};
 
 export type ContentRun = {
   offset: number;
@@ -11,6 +20,8 @@ export type ContentRun = {
   text: string;
   image?: ReaderImage;
   target?: ReadingPosition;
+  highlight?: ContentDecoration;
+  emphasis?: ContentDecoration['emphasis'];
 };
 
 export function contentRuns(
@@ -18,6 +29,7 @@ export function contentRuns(
   images: ReaderImage[],
   links: ReaderLink[],
   startOffset = 0,
+  decorations: ContentDecoration[] = [],
 ): ContentRun[] {
   const endOffset = startOffset + text.length;
   const points = new Set([startOffset, endOffset]);
@@ -45,6 +57,14 @@ export function contentRuns(
     points.add(Math.max(startOffset, link.offset));
     points.add(Math.min(endOffset, link.offset + link.length));
   }
+  const visibleDecorations = decorations.filter(
+    ({ offset, length }) =>
+      length > 0 && offset < endOffset && offset + length > startOffset,
+  );
+  for (const { offset, length } of visibleDecorations) {
+    points.add(Math.max(startOffset, offset));
+    points.add(Math.min(endOffset, offset + length));
+  }
   const boundaries = [...points].sort((a, b) => a - b);
   let linkIndex = 0;
   return boundaries.slice(0, -1).map((offset, index) => {
@@ -55,12 +75,24 @@ export function contentRuns(
       linkIndex++;
     const link = visibleLinks[linkIndex];
     const length = boundaries[index + 1] - offset;
+    const covers = (decoration: ContentDecoration) =>
+      decoration.offset <= offset &&
+      offset < decoration.offset + decoration.length;
+    let highlight: ContentDecoration | undefined;
+    let emphasis: ContentDecoration['emphasis'];
+    for (const decoration of visibleDecorations) {
+      if (!covers(decoration)) continue;
+      if (decoration.highlightId) highlight = decoration;
+      if (decoration.emphasis) emphasis = decoration.emphasis;
+    }
     return {
       offset,
       length,
       text: text.slice(offset - startOffset, offset - startOffset + length),
       ...(imageAt.has(offset) ? { image: imageAt.get(offset) } : {}),
       ...(link && link.offset <= offset ? { target: link.target } : {}),
+      ...(highlight ? { highlight } : {}),
+      ...(emphasis ? { emphasis } : {}),
     };
   });
 }
