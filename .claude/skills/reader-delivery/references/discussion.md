@@ -7,7 +7,7 @@ CI 全绿不是讨论结束。每次最新 PR head 上的必需 CI 通过后、�
 先核对 PR 仍对应本任务分支、未关闭/合并，head SHA 与要交接或修改的提交一致。对 GitHub Actions-only 项目读取评论数据，不调用 Nx Cloud 自愈。按 GitHub CLI 当前版本核对 `--help` 后读取 PR 级对话、reviews 和行内线程：
 
 ```sh
-gh pr view <PR> --comments --json url,state,headRefOid,comments,reviews,latestReviews
+gh pr view <PR> --json url,state,headRefOid,comments,reviews,latestReviews
 gh api --paginate repos/OWNER/REPO/issues/PR_NUMBER/comments --jq '.[] | {id, user: .user.login, body, created_at, html_url}'
 gh api --paginate repos/OWNER/REPO/pulls/PR_NUMBER/reviews --jq '.[] | {id, user: .user.login, state, body, submitted_at, commit_id, html_url}'
 ```
