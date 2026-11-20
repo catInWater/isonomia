@@ -45,6 +45,82 @@ test('linked content runs retain text, image links and clipped links across pagi
   assert.equal(contentRuns('', [], []).length, 0);
 });
 
+test('content decorations split runs while preserving link targets and page offsets', () => {
+  const runs = contentRuns(
+    '甲乙丙丁戊',
+    [],
+    [{ blockIndex: 0, offset: 1, length: 3, target }],
+    0,
+    [
+      { offset: 2, length: 2, highlightId: 'highlight-a', color: 'green' },
+      { offset: 3, length: 1, emphasis: 'jump' },
+    ],
+  );
+  assert.deepEqual(
+    runs.map(({ offset, text, target: linked, highlight, emphasis }) => ({
+      offset,
+      text,
+      linked: Boolean(linked),
+      highlight: highlight?.highlightId,
+      color: highlight?.color,
+      emphasis,
+    })),
+    [
+      {
+        offset: 0,
+        text: '甲',
+        linked: false,
+        highlight: undefined,
+        color: undefined,
+        emphasis: undefined,
+      },
+      {
+        offset: 1,
+        text: '乙',
+        linked: true,
+        highlight: undefined,
+        color: undefined,
+        emphasis: undefined,
+      },
+      {
+        offset: 2,
+        text: '丙',
+        linked: true,
+        highlight: 'highlight-a',
+        color: 'green',
+        emphasis: undefined,
+      },
+      {
+        offset: 3,
+        text: '丁',
+        linked: true,
+        highlight: 'highlight-a',
+        color: 'green',
+        emphasis: 'jump',
+      },
+      {
+        offset: 4,
+        text: '戊',
+        linked: false,
+        highlight: undefined,
+        color: undefined,
+        emphasis: undefined,
+      },
+    ],
+  );
+  const slice = contentRuns('丙丁', [], [], 2, [
+    { offset: 2, length: 2, highlightId: 'highlight-a', color: 'green' },
+    { offset: 3, length: 1, emphasis: 'jump' },
+  ]);
+  assert.deepEqual(
+    slice.map(({ offset, text, emphasis }) => ({ offset, text, emphasis })),
+    [
+      { offset: 2, text: '丙', emphasis: undefined },
+      { offset: 3, text: '丁', emphasis: 'jump' },
+    ],
+  );
+});
+
 test('page lookup sends an anchor on a page boundary to the following page, not the previous page', () => {
   const chapter = {
     id: 'chapter-1',

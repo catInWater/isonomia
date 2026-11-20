@@ -1,0 +1,137 @@
+.panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--reader-line, #d5ddd5);
+  border-radius: 7px;
+  background: var(--reader-paper, #fffefa);
+  color: var(--reader-ink, #292b28);
+  font:
+    13px/1.5 Inter,
+    'Segoe UI',
+    sans-serif;
+  overflow-wrap: anywhere;
+}
+.panelHeading,
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.panelHeading {
+  justify-content: space-between;
+}
+.panel h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.panel p {
+  margin: 0;
+}
+.panel button,
+.panel select,
+.panel textarea {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--reader-line, #d5ddd5);
+  border-radius: 4px;
+  background: color-mix(
+    in srgb,
+    var(--reader-ink, #292b28) 4%,
+    var(--reader-paper, #fffefa)
+  );
+  color: inherit;
+  font: inherit;
+}
+.panel button:not(:disabled) {
+  cursor: pointer;
+}
+.panel button:hover:not(:disabled) {
+  border-color: currentColor;
+}
+.panel button:disabled {
+  opacity: 0.62;
+}
+.panel label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.panel textarea {
+  width: 100%;
+  resize: vertical;
+}
+.editor {
+  display: grid;
+  gap: 8px;
+}
+.editor button[type='submit'] {
+  background: var(--reader-ink, #292b28);
+  color: var(--reader-paper, #fffefa);
+}
+.quote {
+  max-height: 12em;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  border-inline-start: 3px solid #6e987a;
+  white-space: pre-wrap;
+}
+.lost,
+.panel [role='alert'] {
+  padding: 6px 8px;
+  border-inline-start: 3px solid #b9784f;
+}
+.entries {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.entries button {
+  width: 100%;
+  text-align: left;
+}
+.entries button span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.entries button small {
+  display: block;
+  margin-top: 3px;
+}
+.entries [data-highlight-color] {
+  border-inline-start: 3px solid #b48a27;
+  padding-inline-start: 4px;
+}
+.entries [data-highlight-color='green'] {
+  border-color: #4f9d68;
+}
+.entries [data-highlight-color='pink'] {
+  border-color: #bc6397;
+}
+.entries [data-highlight-color='blue'] {
+  border-color: #538ab2;
+}
+.libraryPanel {
+  max-width: 620px;
+  margin: 0 auto 24px;
+}
+.libraryRetained {
+  max-width: 1180px;
+  margin: 24px auto 0;
+}
+.libraryRetained summary {
+  cursor: pointer;
+}
+.libraryRetained li {
+  margin-block: 8px;
+}

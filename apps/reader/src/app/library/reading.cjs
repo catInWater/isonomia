@@ -4,6 +4,8 @@ const { constants } = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { MAX_BYTES } = require('./content.cjs');
+const { comparablePath, validStoredBookName } = require('./index.cjs');
+const ADAPTER_VERSION = 2;
 const DEFAULT_PREFERENCES = Object.freeze({
   mode: 'scroll',
   fontSize: 18,
@@ -47,6 +49,7 @@ function validPreferences(value) {
 function validPosition(value) {
   return (
     object(value, 'chapterId,blockIndex,offset') &&
+    typeof value.chapterId === 'string' &&
     /^chapter-[1-9]\d{0,3}$/.test(value.chapterId) &&
     Number.isSafeInteger(value.blockIndex) &&
     value.blockIndex >= 0 &&
@@ -115,28 +118,26 @@ class ReadingManager {
     this.pending = Promise.resolve();
     this.cache = null;
   }
-  _enqueue(action) {
+  runExclusive(action) {
     const next = this.pending.then(action);
     this.pending = next.catch(() => {});
     return next;
   }
-  async _content(bookId, forceHash = false) {
-    const book = (await this.library.list()).find(
-      (item) => item.bookId === bookId,
-    );
-    if (
-      !book ||
-      !['txt', 'epub'].includes(book.format) ||
-      book.fileName !== `${bookId}.${book.format}`
-    )
+  async verifiedContent(bookId, forceHash = false) {
+    const book = await this.library.findBook(bookId);
+    if (!book || book.fileStatus !== 'available' || !validStoredBookName(book))
       fail('NOT_FOUND', '书籍文件不可用。');
     const directory = path.join(this.root, 'books');
     const file = path.join(directory, book.fileName);
+    const realRoot = await fs.realpath(this.root).catch(() => '');
     const realDirectory = await fs.realpath(directory).catch(() => '');
     if (
+      !realRoot ||
       !realDirectory ||
-      (await fs.realpath(file).catch(() => '')) !==
-        path.join(realDirectory, book.fileName)
+      comparablePath(path.dirname(realDirectory)) !==
+        comparablePath(realRoot) ||
+      comparablePath(await fs.realpath(file).catch(() => '')) !==
+        comparablePath(path.join(realDirectory, book.fileName))
     )
       fail('CONTENT_UNAVAILABLE', '书籍文件不可用。');
     const handle = await fs
@@ -223,29 +224,34 @@ class ReadingManager {
     return lastReadAt;
   }
   openBook(request) {
-    return this._enqueue(async () => {
+    return this.runExclusive(async () => {
       if (!validReadingRequest('openBook', request))
         fail('INVALID_REQUEST', '阅读请求无效。');
-      const { book, chapters } = await this._content(request.bookId, true);
+      const { book, chapters } = await this.verifiedContent(
+        request.bookId,
+        true,
+      );
       const record = await this.store.load(`reading-${book.bookId}`);
       let position = { chapterId: chapters[0].id, blockIndex: 0, offset: 0 };
       let preferences = { ...DEFAULT_PREFERENCES };
       if (record) {
-        if (record.data.contentHash !== book.contentHash)
-          fail('CONTENT_CHANGED', '阅读记录的内容版本不匹配，请恢复原始书籍。');
-        if (
-          record.data.adapterVersion !== undefined &&
-          record.data.adapterVersion !== 2
-        )
-          fail('INVALID_STATE', '阅读记录格式版本不受支持。');
-        position =
-          record.data.adapterVersion === 2
-            ? record.data.position
-            : legacyPosition(chapters, record.data.position);
-        checkPosition(chapters, position);
         if (!validPreferences(record.data.preferences))
           fail('INVALID_STATE', '阅读设置无效，请恢复阅读记录。');
         preferences = record.data.preferences;
+        if (record.data.contentHash === book.contentHash) {
+          if (
+            record.data.adapterVersion !== undefined &&
+            record.data.adapterVersion !== ADAPTER_VERSION
+          )
+            fail('INVALID_STATE', '阅读记录格式版本不受支持。');
+          position =
+            record.data.adapterVersion === ADAPTER_VERSION
+              ? record.data.position
+              : legacyPosition(chapters, record.data.position);
+          checkPosition(chapters, position);
+        }
+        // An explicitly replaced, verified copy starts at its own beginning.
+        // The previous revision remains on disk; only typography carries over.
       }
       const lastReadAt = await this._touch(book.bookId);
       const { fileName: _fileName, ...summary } = book;
@@ -253,10 +259,10 @@ class ReadingManager {
     });
   }
   readChapter(request) {
-    return this._enqueue(async () => {
+    return this.runExclusive(async () => {
       if (!validReadingRequest('readChapter', request))
         fail('INVALID_REQUEST', '阅读请求无效。');
-      const { chapters } = await this._content(request.bookId);
+      const { chapters } = await this.verifiedContent(request.bookId);
       const chapter = chapters.find((item) => item.id === request.chapterId);
       if (!chapter) fail('NOT_FOUND', '找不到章节。');
       return {
@@ -274,17 +280,15 @@ class ReadingManager {
     });
   }
   saveReading(request) {
-    return this._enqueue(async () => {
+    return this.runExclusive(async () => {
       if (!validReadingRequest('saveReading', request))
         fail('INVALID_REQUEST', '阅读请求无效。');
-      const { book, chapters } = await this._content(request.bookId);
+      const { book, chapters } = await this.verifiedContent(request.bookId);
       if (request.contentHash !== book.contentHash)
         fail('CONTENT_CHANGED', '阅读记录的内容版本不匹配。');
       checkPosition(chapters, request.position);
       const id = `reading-${book.bookId}`;
       const current = await this.store.load(id);
-      if (current && current.data.contentHash !== book.contentHash)
-        fail('CONTENT_CHANGED', '阅读记录的内容版本不匹配。');
       const lastReadAt = book.lastReadAt || '';
       const lastReadTime = Date.parse(lastReadAt);
       const shouldTouch =
@@ -293,7 +297,7 @@ class ReadingManager {
       await this.store.save(
         id,
         {
-          adapterVersion: 2,
+          adapterVersion: ADAPTER_VERSION,
           contentHash: book.contentHash,
           position: request.position,
           preferences: request.preferences,
@@ -309,5 +313,7 @@ module.exports = {
   DEFAULT_PREFERENCES,
   validReadingRequest,
   validPosition,
+  checkPosition,
   validPreferences,
+  ADAPTER_VERSION,
 };

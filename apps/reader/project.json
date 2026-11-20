@@ -86,7 +86,8 @@
       "inputs": [
         "default",
         "{workspaceRoot}/tests/**/*",
-        "{workspaceRoot}/tools/**/*"
+        "{workspaceRoot}/tools/**/*",
+        "{workspaceRoot}/apps/reader-ui/src/**/*"
       ],
       "cache": true
     },
