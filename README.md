@@ -118,6 +118,8 @@ replace Windows UI or installer acceptance. D-08's measurement conditions remain
 a proposal, not benchmark data; no performance or full product acceptance should
 be inferred from a Linux build or the CI configuration.
 
+For feature and bug-fix deliveries, start with the project [reader-delivery skill](.claude/skills/reader-delivery/SKILL.md) using `/reader-delivery`; it standardizes the branch, verification report, PR screenshots, current-head CI, and review-comment follow-up while leaving final review and merge to the user.
+
 ## Highlights and annotations
 
 Select text in the reader, then choose **划线** for a yellow highlight or
