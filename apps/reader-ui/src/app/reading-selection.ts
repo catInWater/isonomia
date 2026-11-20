@@ -88,7 +88,9 @@ export function readSelection(
     for (const candidate of runs) {
       const edge = document.createRange();
       edge.selectNode(candidate);
-      edge.collapse(end);
+      // Start boundaries compare to a run's start; end boundaries to its end.
+      // Using the opposite edge includes adjacent, unselected inline runs.
+      edge.collapse(!end);
       const order = point.compareBoundaryPoints(Range.START_TO_START, edge);
       if (end ? order >= 0 : order <= 0)
         return fromRun(
