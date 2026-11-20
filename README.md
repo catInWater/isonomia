@@ -118,6 +118,22 @@ replace Windows UI or installer acceptance. D-08's measurement conditions remain
 a proposal, not benchmark data; no performance or full product acceptance should
 be inferred from a Linux build or the CI configuration.
 
+### Reusable Linux GUI smoke runner
+
+The checked-in [`tools/gui-smoke`](tools/gui-smoke/README.md) runner replays the production Electron GUI checks locally. Build with Nx first, then run the TXT scenario, EPUB scenario, or both:
+
+```sh
+# The Nx target builds first, then runs both scenarios.
+npm exec -- nx run reader:gui-smoke
+
+# Or run one scenario after building.
+npm exec -- nx build reader
+tools/gui-smoke/run.sh phase3
+tools/gui-smoke/run.sh phase3-epub
+```
+
+It uses a private headless Wayland session, a throwaway profile, and synthetic books; it keeps logs and screenshots in the printed temporary directory. It checks the renderer sandbox and does not access arbitrary host files. This is Linux-only local evidence and does not replace Windows UI acceptance. See the [phase-3 screenshot report](.claude/docs/validation/03-anchors-annotations.md) for reviewed output and evidence limits.
+
 ## Highlights and annotations
 
 Select text in the reader, then choose **划线** for a yellow highlight or

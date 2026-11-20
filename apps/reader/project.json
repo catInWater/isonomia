@@ -101,6 +101,12 @@
         "{workspaceRoot}/README.md"
       ],
       "cache": true
+    },
+    "gui-smoke": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": { "command": "tools/gui-smoke/run.sh --all" },
+      "cache": false
     }
   }
 }

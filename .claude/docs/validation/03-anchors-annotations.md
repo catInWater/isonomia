@@ -5,6 +5,7 @@
 - 关联：[PR #9](https://github.com/catInWater/isonomia/pull/9)、[阶段 3 规格](../specs/03-anchors-annotations.md)、[ADR-0003](../adr/0003-source-anchors.md)。
 - 环境：Linux、生产构建 Electron 34.5.8、私有 headless Wayland 会话、临时用户目录。renderer sandbox 保持启用，进程检查为 `NoNewPrivs: 1`、`Seccomp: 2`。
 - 数据：仅使用合成 TXT/EPUB、合成批注和测试夹具；原生文件对话框由测试 harness 提供合成文件响应，不包含私人书籍。
+- 可复用脚本：[tools/gui-smoke](../../../tools/gui-smoke/README.md)，也可通过 `npm exec -- nx run reader:gui-smoke` 构建并运行两个场景。
 - 下列 9 张 PNG 为实际应用运行时的原始截图，未裁剪或修饰。点击图片可查看原图。静态截图展示界面状态，重启、保存、复制和范围完整性等结论来自交互脚本断言，不以单张截图替代测试。
 
 ## 快速检查索引
