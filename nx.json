@@ -7,7 +7,7 @@
       "!{projectRoot}/.eslintrc.json",
       "!{projectRoot}/eslint.config.mjs"
     ],
-    "sharedGlobals": []
+    "sharedGlobals": ["{workspaceRoot}/types/**/*.d.ts"]
   },
   "plugins": [
     {
@@ -42,7 +42,7 @@
       }
     }
   ],
-  "nxCloudId": "6afc73370849f4ec34cba4b8",
+  "nxCloudId": "6afe7af0cb6f71c174992140",
   "analytics": false,
   "generators": {
     "@nx/react": {

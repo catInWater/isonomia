@@ -16,6 +16,9 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "es2022",
+    "paths": {
+      "@reader/storage-bridge": ["./types/storage-bridge.d.ts"]
+    },
     "customConditions": ["@org/source"],
     "noUncheckedSideEffectImports": false,
     "types": ["*"]

@@ -2,6 +2,13 @@
   "$schema": "../../../../../node_modules/nx-electron/src/validation/maker.schema.json",
   "appId": "org.isonomia.reader",
   "productName": "Reader",
+  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  },
   "directories": {
     "app": "dist/apps/reader"
   },

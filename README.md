@@ -5,17 +5,17 @@ Nx monorepo with a React renderer (`apps/reader-ui`) and an Electron shell
 
 ## Requirements
 
-- Node.js 24 and npm 11 (workspace package manager: npm 11.19.0).
+- Node.js 24.20.0 (`.node-version`) and npm 11.19.0 (workspace package manager).
 - A desktop session to open Electron. Headless Linux requires Xvfb and Chromium's
   system libraries.
 - Network access to npm and Electron's binary downloads during installation.
 
 ```sh
-npm install
+npm ci
 ```
 
-If your network uses `HTTP_PROXY`/`HTTPS_PROXY`, enable the Electron downloader's
-proxy support with `ELECTRON_GET_USE_PROXY=1 npm install`.
+The network is needed to install npm packages and download Electron's binary.
+For a proxy, use `ELECTRON_GET_USE_PROXY=1 npm ci`.
 
 Nx and all `@nx/*` plugins are aligned to **22.0.0**, with `nx-electron` 22.0.0
 and TypeScript 5.9.3. The workspace originally used Nx 24; it was downgraded
@@ -42,8 +42,10 @@ To run only the web UI at http://localhost:4200:
 npm exec -- nx serve reader-ui
 ```
 
-The skeleton has Library (`#/`) and About (`#/about`) routes. Navigation and
-refresh use `HashRouter`, so they also work from a local file URL.
+The app provides a local EPUB/TXT library, safe chapter-based reading, saved
+reading progress and typography, plus phase-3 source anchors, colored highlights
+and annotations. Product acceptance remains in progress; see the ticket status and
+platform caveats below.
 
 ## Build and check
 
@@ -54,16 +56,89 @@ npm exec -- nx build reader
 # Static checks for both projects
 npm exec -- nx run-many -t lint typecheck -p reader-ui reader
 
+# Built-in Node tests: shell, storage, and deterministic fixtures
+npm exec -- nx run reader:test
+
+# Check local Markdown links and specification/ticket references
+npm exec -- nx run reader:spec-check
+
 # Verify TypeScript project references
 npm exec -- nx sync:check
 ```
 
 Renderer output: `dist/apps/reader-ui`. Electron output: `dist/apps/reader`.
 The shell uses localhost in development and the sibling renderer directory for
-production/file loading. `contextIsolation` is enabled and `nodeIntegration` is
-disabled; the preload exposes only platform and application-version access.
+production/file loading. `sandbox`, `webSecurity` and `contextIsolation` are
+enabled; `nodeIntegration` and webviews are disabled. The isolated preload bridge
+exposes schema-validated storage, library, reading and annotation methods. File
+selection and clipboard writes stay in the main process; the renderer does not
+receive raw IPC, filesystem paths or arbitrary filesystem/network access.
+Production requests are limited to bundled files beneath the renderer directory;
+permissions, downloads, pop-up windows and navigation are denied. In development
+only the renderer's configured local origin is permitted. This is a narrow shell
+boundary, not an EPUB/TXT import security evaluation.
 
-There is no unit-test target in this minimal skeleton.
+Run the built-in Node tests, including shell security, storage recovery, and
+synthetic fixture checks:
+
+```sh
+npm exec -- nx run reader:test
+```
+
+The fixture recipe is deterministic and can be checked independently with
+`node tools/fixtures.cjs --check`. Fixture provenance, CC0 licensing, intended
+negative cases, byte sizes and SHA-256 checksums are in
+`tests/fixtures/manifest.json`.
+
+## Specification, CI and acceptance status
+
+Architecture and phase-zero trade-offs are recorded in
+[ADR-0001](.claude/docs/adr/0001-phase-zero-foundation.md), the reading adapter in
+[ADR-0002](.claude/docs/adr/0002-reading-adapter.md), and source anchors and
+annotations in [ADR-0003](.claude/docs/adr/0003-source-anchors.md). Remaining scope
+proposals are tracked in the specification decision table.
+
+The phase-zero scope defaults in `.claude/docs/specs/README.md` are engineering
+baselines, not user-approved product decisions. D-02 confirms both scroll and
+paginated reading. Other open decisions still require user confirmation or
+explicit deferral, recorded by T-000 before affected specifications can be marked ready. T-000 through T-003 remain in progress until
+their ticket acceptance evidence is complete.
+
+CI is configured in `.github/workflows/ci.yml`; required branch protection/check
+configuration is external repository administration and has not been inspected or
+verified. The workflow's successful run is not evidence that branch protection is
+enabled. No Windows installation/start/quit/uninstall smoke test or protected-data
+retention check has been performed here. Linux production Electron smoke checks
+exercise highlight creation/editing, two-way jumps, sorting, delete/undo,
+same-chapter cross-page selections, restart, replacement fallback/lost states and
+retained annotations after file removal. They use a throwaway profile and synthetic
+text under a headless Wayland compositor, with the renderer sandbox retained;
+the file dialog response is supplied by the test harness. These checks do not
+replace Windows UI or installer acceptance. D-08's measurement conditions remain
+a proposal, not benchmark data; no performance or full product acceptance should
+be inferred from a Linux build or the CI configuration.
+
+For feature and bug-fix deliveries, start with the project [reader-delivery skill](.claude/skills/reader-delivery/SKILL.md) using `/reader-delivery`; it standardizes the branch, verification report, PR screenshots, current-head CI, and review-comment follow-up while leaving final review and merge to the user.
+
+## Highlights and annotations
+
+Select text in the reader, then choose **划线** for a yellow highlight or
+**写批注** to enter a note and choose its color. Click a highlight to edit it;
+**全书划线** lists this book's entries by chapter or creation time. Entries can
+jump back to the source, copy the quote/citation/note, or be deleted and restored
+with **撤销删除**. For a highlight overlapping a book link, Alt-click follows the
+book's original link instead of opening the annotation.
+
+In paginated mode, select the beginning of a range and choose **跨页选取**;
+select its endpoint on a later page of the same chapter, then highlight or write a
+note. Cross-chapter selection remains deferred pending D-07.
+
+On the shelf, **划线与批注 → 替换正文…** replaces a book's private text copy
+without changing its book ID or saved anchors. A unique quote can relocate;
+ambiguous or missing text is shown as **位置丢失**. Removing only the book file
+keeps annotations accessible in the retained-content section. Copying a lost
+annotation still includes its original quote, citation and note; batch/file export
+belongs to phase 6.
 
 ## Packaging
 
@@ -77,8 +152,14 @@ npm exec -- nx run reader:make
 
 Both targets first build the production shell and UI. Outputs go to
 `dist/packages` and `dist/executables`, respectively. Publishing is disabled.
-Platform signing, icons, update service and release metadata still need to be
-configured before distribution. Packaging options live in
+The CI Windows job builds an unsigned x64 NSIS installer and retains only the
+root-level installer as a short-lived artifact without release/publish steps; the
+`win-unpacked` executable is not a standalone portable app and must not be copied
+out of its folder (it needs adjacent Electron runtime files including `icudtl.dat`
+and `resources`). CI builds the installer but does not install, launch, or uninstall
+it. The NSIS uninstall policy preserves application data; verify it explicitly
+against a throwaway Windows profile before release. Platform signing, icons, update service and release metadata still need
+to be configured. Packaging options live in
 `apps/reader/src/app/options/maker.options.json`.
 
 The HTML declares `<base href="./">`, and Webpack uses `publicPath: './'`.

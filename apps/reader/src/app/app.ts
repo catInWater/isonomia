@@ -2,7 +2,13 @@ import { BrowserWindow, screen } from 'electron';
 import { rendererAppName, rendererAppPort } from './constants';
 import { environment } from '../environments/environment';
 import { join } from 'path';
-import { format } from 'url';
+import { mkdirSync } from 'node:fs';
+import { allowRequest, rendererDocument, validJson } from './api/security';
+import { DurableStore } from './storage/index.cjs';
+import type { Json } from './storage/index.cjs';
+import { LibraryManager } from './library/index.cjs';
+import { ReadingManager } from './library/reading.cjs';
+import { AnnotationsManager } from './library/annotations.cjs';
 
 export default class App {
   // Keep a global reference of the window object, if you don't, the window will
@@ -10,6 +16,14 @@ export default class App {
   static mainWindow: BrowserWindow | null = null;
   static application: Electron.App;
   static BrowserWindow: typeof BrowserWindow;
+  static documentUrl = '';
+  static storageAvailable = false;
+  static store: InstanceType<typeof DurableStore> | null = null;
+  static library: InstanceType<typeof LibraryManager> | null = null;
+  static reading: InstanceType<typeof ReadingManager> | null = null;
+  static annotations: InstanceType<typeof AnnotationsManager> | null = null;
+  static libraryRoot = '';
+  static storageError = '';
 
   public static isDevelopmentMode() {
     const isEnvironmentSet: boolean = 'ELECTRON_IS_DEV' in process.env;
@@ -48,18 +62,70 @@ export default class App {
     const width = Math.min(1280, workAreaSize.width || 1280);
     const height = Math.min(720, workAreaSize.height || 720);
 
-    // Create the browser window.
+    App.documentUrl = rendererDocument(
+      __dirname,
+      !App.application.isPackaged && App.isDevelopmentMode()
+        ? rendererAppPort
+        : undefined,
+    );
+    try {
+      const root = join(App.application.getPath('userData'), 'data');
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      App.store = new DurableStore({
+        root,
+        schemaVersion: 1,
+        schemas: {
+          1: (data: Json) =>
+            validJson(data) &&
+            typeof data === 'object' &&
+            data !== null &&
+            !Array.isArray(data),
+        },
+      });
+      App.libraryRoot = root;
+      App.library = new LibraryManager({ root, store: App.store });
+      App.reading = new ReadingManager({
+        root,
+        store: App.store,
+        library: App.library,
+      });
+      App.annotations = new AnnotationsManager({
+        store: App.store,
+        library: App.library,
+        reading: App.reading,
+      });
+      App.storageAvailable = true;
+    } catch (error) {
+      App.storageAvailable = false;
+      App.storageError = error instanceof Error ? error.message : 'unknown';
+    }
+
     App.mainWindow = new BrowserWindow({
       width: width,
       height: height,
       show: false,
       webPreferences: {
+        sandbox: true,
+        webSecurity: true,
+        webviewTag: false,
         contextIsolation: true,
         nodeIntegration: false,
         backgroundThrottling: false,
         preload: join(__dirname, 'main.preload.js'),
       },
     });
+    const contents = App.mainWindow.webContents;
+    contents.session.setPermissionRequestHandler(
+      (_contents, _permission, callback) => callback(false),
+    );
+    contents.session.setPermissionCheckHandler(() => false);
+    contents.session.webRequest.onBeforeRequest((details, callback) => {
+      callback({ cancel: !allowRequest(details.url, App.documentUrl) });
+    });
+    contents.on('will-navigate', (event) => event.preventDefault());
+    contents.on('will-attach-webview', (event) => event.preventDefault());
+    contents.on('will-frame-navigate', (event) => event.preventDefault());
+    contents.session.on('will-download', (event) => event.preventDefault());
     App.mainWindow.setMenu(null);
     App.mainWindow.center();
 
@@ -80,18 +146,7 @@ export default class App {
   }
 
   private static loadMainWindow() {
-    // load the index.html of the app.
-    if (!App.application.isPackaged && App.isDevelopmentMode()) {
-      App.mainWindow!.loadURL(`http://localhost:${rendererAppPort}`);
-    } else {
-      App.mainWindow!.loadURL(
-        format({
-          pathname: join(__dirname, '..', rendererAppName, 'index.html'),
-          protocol: 'file:',
-          slashes: true,
-        }),
-      );
-    }
+    void App.mainWindow!.loadURL(App.documentUrl);
   }
 
   static main(app: Electron.App, browserWindow: typeof BrowserWindow) {
