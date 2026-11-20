@@ -1,4 +1,5 @@
 import { app, clipboard, dialog, ipcMain } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import type { AnnotationRequest } from '@reader/storage-bridge';
 import App from '../app';
 import { isTrustedSender, validateRequest } from '../api/security';
@@ -31,6 +32,8 @@ export default class ElectronEvents {
       'copyAnnotation',
       'loadNote',
       'saveNote',
+      'createNoteSource',
+      'exportNote',
     ]) {
       ipcMain.handle(`reader:${method}`, async (event, ...args: unknown[]) => {
         if (
@@ -82,6 +85,36 @@ export default class ElectronEvents {
           );
           clipboard.writeText(text);
           return;
+        }
+        if (method === 'exportNote') {
+          const result = await dialog.showSaveDialog(App.mainWindow!, {
+            title: '导出当前笔记副本（包含尚未保存的输入）',
+            defaultPath: 'note-copy.json',
+            filters: [{ name: '笔记恢复副本', extensions: ['json'] }],
+          });
+          if (result.canceled || !result.filePath) return false;
+          try {
+            await writeFile(
+              result.filePath,
+              (args[0] as { document: string }).document,
+              {
+                encoding: 'utf8',
+                flag: 'wx',
+                mode: 0o600,
+              },
+            );
+          } catch {
+            throw new Error(
+              '无法导出副本。请选择尚不存在的新文件名，并检查磁盘空间和权限。',
+            );
+          }
+          return true;
+        }
+        if (method === 'createNoteSource') {
+          if (!App.notes) throw new Error('本地笔记暂不可用。');
+          return App.notes.createSource(
+            args[0] as import('@reader/storage-bridge').CreateNoteSourceRequest,
+          );
         }
         if (method === 'loadNote' || method === 'saveNote') {
           if (!App.notes) throw new Error('本地笔记暂不可用。');

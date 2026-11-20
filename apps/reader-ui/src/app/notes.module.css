@@ -1,10 +1,8 @@
 .panel {
-  grid-column: 3;
-  grid-row: 1;
-  position: sticky;
-  top: calc(var(--reader-header-height) + 28px);
-  align-self: start;
+  position: static;
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   height: calc(100vh - 150px);
   border: 1px solid var(--reader-line);
   border-radius: 7px;
@@ -69,20 +67,51 @@
   border-left: 3px solid var(--reader-line);
   color: var(--reader-muted);
 }
+.panel[hidden] {
+  display: none;
+}
+.editor:focus-visible {
+  outline: 2px solid var(--reader-ink);
+  outline-offset: -3px;
+}
+.editor [data-note-source] {
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0.3em 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--reader-muted);
+  background: var(--reader-bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.editor [data-note-source] > span {
+  display: block;
+}
+.editor [data-note-jump] {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  border: 0;
+  padding: 0;
+  color: var(--reader-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8em;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.notice,
+.sourceStatus {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--reader-muted);
+}
 @media (max-width: 900px) {
   .panel {
-    grid-column: 2;
-    grid-row: 2;
-    position: static;
-    height: 360px;
-  }
-}
-@media (max-width: 640px) {
-  .panel {
-    grid-column: 1;
-    grid-row: auto;
-    margin-top: 12px;
-    height: 360px;
+    height: 100%;
   }
 }
 .error {

@@ -43,7 +43,16 @@ export function validateRequest(method: string, args: unknown[]): void {
       validJson(args[0]) &&
       withinJsonLimit(args[0]) &&
       validAnnotationRequest(method, args[0])) ||
-    (['loadNote', 'saveNote'].includes(method) &&
+    (method === 'exportNote' &&
+      args.length === 1 &&
+      validJson(args[0]) &&
+      typeof args[0] === 'object' &&
+      args[0] !== null &&
+      !Array.isArray(args[0]) &&
+      Object.keys(args[0]).join(',') === 'document' &&
+      typeof (args[0] as { document?: unknown }).document === 'string' &&
+      (args[0] as { document: string }).document.length <= 500_000) ||
+    (['loadNote', 'saveNote', 'createNoteSource'].includes(method) &&
       args.length === 1 &&
       validJson(args[0]) &&
       withinJsonLimit(args[0]) &&
@@ -86,7 +95,7 @@ export function validBookId(value: unknown): value is string {
 export function validRecordId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
-    /^(?:book|note)-[a-z0-9_-]{1,74}$|^settings$/.test(value)
+    /^(?:book)-[a-z0-9_-]{1,74}$|^settings$/.test(value)
   );
 }
 

@@ -145,6 +145,43 @@ test('S03 IPC validates annotation changes, revisions and half-open range shapes
   }
 });
 
+test('S04 IPC restricts notes, source creation and escape exports to bounded payloads', () => {
+  const range = {
+    start: { chapterId: 'chapter-1', blockIndex: 0, offset: 0 },
+    end: { chapterId: 'chapter-1', blockIndex: 0, offset: 3 },
+  };
+  const document = JSON.stringify({
+    schemaVersion: 1,
+    html: '<p>笔记</p>',
+    sources: [],
+    importedAnnotationIds: [],
+  });
+  for (const [method, request] of [
+    ['loadNote', { bookId }],
+    ['saveNote', { bookId, document, expectedRevision: 0 }],
+    ['createNoteSource', { bookId, contentHash: 'a'.repeat(64), range }],
+    ['exportNote', { document }],
+  ]) {
+    assert.doesNotThrow(() => validateRequest(method, [request]));
+    assert.throws(() =>
+      validateRequest(method, [{ ...request, path: '/tmp/private' }]),
+    );
+    assert.throws(() => validateRequest(method, [request, 'extra']));
+  }
+  assert.throws(() =>
+    validateRequest('exportNote', [{ document: 'x'.repeat(500_001) }]),
+  );
+  assert.throws(() =>
+    validateRequest('createNoteSource', [
+      {
+        bookId,
+        contentHash: 'a'.repeat(64),
+        range: { ...range, end: { ...range.end, chapterId: 'chapter-2' } },
+      },
+    ]),
+  );
+});
+
 test('S00-A6 production allows only bundled assets and blocks remote/local escapes', () => {
   assert.equal(allowRequest('file:///opt/reader-ui/main.js', document), true);
   assert.equal(

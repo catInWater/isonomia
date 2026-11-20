@@ -96,7 +96,11 @@ export default class App {
         library: App.library,
         reading: App.reading,
       });
-      App.notes = new NotesManager({ store: App.store, library: App.library });
+      App.notes = new NotesManager({
+        store: App.store,
+        library: App.library,
+        reading: App.reading,
+      });
       App.storageAvailable = true;
     } catch (error) {
       App.storageAvailable = false;

@@ -131,7 +131,7 @@ book's original link instead of opening the annotation.
 
 In paginated mode, select the beginning of a range and choose **跨页选取**;
 select its endpoint on a later page of the same chapter, then highlight or write a
-note. Cross-chapter selection remains deferred pending D-07.
+note. Cross-chapter selection is excluded by the confirmed D-07 scope.
 
 On the shelf, **划线与批注 → 替换正文…** replaces a book's private text copy
 without changing its book ID or saved anchors. A unique quote can relocate;
@@ -139,6 +139,44 @@ ambiguous or missing text is shown as **位置丢失**. Removing only the book f
 keeps annotations accessible in the retained-content section. Copying a lost
 annotation still includes its original quote, citation and note; batch/file export
 belongs to phase 6.
+
+## Side-by-side notes
+
+Each book has one continuously saved note with paragraphs, headings, lists,
+quotes and bold text. The status distinguishes pending, saving, saved and failed;
+saving starts 1.5 seconds after the last edit. Failed writes retain input and offer
+retry plus **导出恢复副本**, a versioned JSON copy of current input and sources,
+not the phase-6 Markdown export or a full backup.
+
+Select source text and choose **插入选区到笔记**, or drag it into the note. Both
+insert an immutable quote/citation snapshot with a shared source anchor. Undo/redo
+is one step; clicking the citation re-resolves the original text after typography
+changes. **此条批注汇入笔记** and **全部批注汇入笔记** append annotation copies in
+source order, skipping annotation IDs already imported. Undo also restores dedup
+metadata. Removed book files leave notes editable from **查看保留笔记**.
+
+Resize the divider by dragging or its Left/Right keys; Enter collapses it. Width
+and collapse state survive restart. Narrow windows use a notes drawer; collapsing,
+focus mode and resizing keep the editor and its caret/history mounted. App-managed
+navigation and normal window close flush pending notes before leaving; failed saves
+block leaving so the input can be retried/exported.
+
+The [notes ADR](.claude/docs/adr/0004-notes-editor.md) documents the format,
+immutable-source ledger, legacy migration and ambiguous-write retry rules. The
+[Phase 4 validation report](.claude/docs/validation/04-notes.md) includes actual
+Linux screenshots, restart/normal-close checks and the remaining Windows limits.
+Run the production GUI regression on Linux with the already-installed
+`gnome-shell` and `dbus-run-session` (the script installs nothing):
+
+```sh
+npm exec -- nx run reader:notes-gui-smoke
+```
+
+It creates its own Wayland session and temporary profile, uses only synthetic TXT
+books, and leaves screenshots plus its synthetic profile under the printed `/tmp`
+directory. Electron sandbox stays enabled. Native dialogs receive synthetic test
+responses; the storage/library/notes bridge is real. Windows UI/installer testing
+is still a separate manual acceptance requirement.
 
 ## Packaging
 

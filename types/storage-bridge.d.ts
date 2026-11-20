@@ -55,6 +55,8 @@ export interface StorageBridge {
   }): Promise<void>;
   loadNote(request: { bookId: string }): Promise<NoteSnapshot>;
   saveNote(request: SaveNoteRequest): Promise<NoteSnapshot>;
+  createNoteSource(request: CreateNoteSourceRequest): Promise<SourceAnchor>;
+  exportNote(request: { document: string }): Promise<boolean>;
 }
 export interface BookSummary {
   bookId: string;
@@ -186,6 +188,18 @@ export interface NoteSnapshot {
   revision: number;
   document: string;
   updatedAt: string | null;
+  resolutions: Record<string, AnchorResolution>;
+}
+export interface NoteDocument {
+  schemaVersion: 1;
+  html: string;
+  sources: SourceAnchor[];
+  importedAnnotationIds: string[];
+}
+export interface CreateNoteSourceRequest {
+  bookId: string;
+  contentHash: string;
+  range: ReadingRange;
 }
 export interface SaveNoteRequest {
   bookId: string;
