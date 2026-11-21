@@ -11,7 +11,7 @@ const DEFAULT_PREFERENCES = Object.freeze({
   fontSize: 18,
   lineHeight: 1.6,
   pageMargin: 24,
-  fontFamily: 'default',
+  fontFamily: 'serif',
   theme: 'light',
 });
 function fail(code, message) {

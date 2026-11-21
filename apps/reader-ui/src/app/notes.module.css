@@ -3,10 +3,12 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  height: calc(100vh - 150px);
-  border: 1px solid var(--reader-line);
-  border-radius: 7px;
-  background: var(--reader-paper);
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -25,23 +27,37 @@
 }
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 8px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 6px 0;
+  overflow-x: auto;
   border-bottom: 1px solid var(--reader-line);
+  scrollbar-width: none;
+}
+.toolbar::-webkit-scrollbar {
+  display: none;
 }
 .toolbar button {
-  padding: 5px 7px;
+  flex: 0 0 32px;
+  height: 32px;
+  padding: 3px;
   border: 1px solid var(--reader-line);
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--reader-ink);
   background: transparent;
   font: inherit;
-  font-size: 11px;
   cursor: pointer;
+}
+.toolbar button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--reader-ink) 15%, transparent);
 }
 .toolbar button:last-child {
   margin-left: auto;
+}
+.toolbar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .editor {
   flex: 1;

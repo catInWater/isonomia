@@ -122,12 +122,19 @@ For feature and bug-fix deliveries, start with the project [reader-delivery skil
 
 ## Highlights and annotations
 
-Select text in the reader, then choose **划线** for a yellow highlight or
-**写批注** to enter a note and choose its color. Click a highlight to edit it;
-**全书划线** lists this book's entries by chapter or creation time. Entries can
-jump back to the source, copy the quote/citation/note, or be deleted and restored
-with **撤销删除**. For a highlight overlapping a book link, Alt-click follows the
-book's original link instead of opening the annotation.
+In **1.0.0**, select text to reveal an anchored four-color palette and symbol
+buttons for annotation/note insertion. Click an existing highlight to edit it in
+place; the reader no longer has a separate highlight sidebar or highlight controls
+in the top console. Retained annotations are still accessible from the shelf.
+For a highlight overlapping a book link, Alt-click opens the book reference
+preview instead of the annotation. Book references appear as superscripts and
+open an adaptive plain-text bubble without changing chapters or reading position.
+
+Move to the top edge for the one-line symbol console, or to the left edge for the
+collapsible table of contents (also **T**). Controls remain keyboard accessible.
+The reader uses a consistent theme background without visible scrollbars; scrolling
+still works. Text uses Times New Roman for English and SimSun/Songti/serif fallbacks
+for Chinese; there is no font picker.
 
 In paginated mode, select the beginning of a range and choose **跨页选取**;
 select its endpoint on a later page of the same chapter, then highlight or write a
@@ -148,15 +155,20 @@ saving starts 1.5 seconds after the last edit. Failed writes retain input and of
 retry plus **导出恢复副本**, a versioned JSON copy of current input and sources,
 not the phase-6 Markdown export or a full backup.
 
-Select source text and choose **插入选区到笔记**, or drag it into the note. Both
+Select source text and choose the **↗** palette action, or drag it into the note.
+With notes collapsed, drag the selection to the right-side blank-area target to
+open notes and add the source. Both
 insert an immutable quote/citation snapshot with a shared source anchor. Undo/redo
 is one step; clicking the citation re-resolves the original text after typography
 changes. **此条批注汇入笔记** and **全部批注汇入笔记** append annotation copies in
 source order, skipping annotation IDs already imported. Undo also restores dedup
 metadata. Removed book files leave notes editable from **查看保留笔记**.
 
-Resize the divider by dragging or its Left/Right keys; Enter collapses it. Width
-and collapse state survive restart. Narrow windows use a notes drawer; collapsing,
+Reading and notes default to equal columns. Resize the divider by dragging or its
+Left/Right keys; Enter collapses it. The saved ratio stays consistent as the TOC
+opens and closes. Ratios and collapse state survive restart; old pixel-only layouts
+start with the new equal split. Windows narrower than 700 CSS pixels use a notes
+drawer. Symbol style buttons toggle formatting, with **Tx** to clear styles; collapsing,
 focus mode and resizing keep the editor and its caret/history mounted. App-managed
 navigation and normal window close flush pending notes before leaving; failed saves
 block leaving so the input can be retried/exported.

@@ -3,6 +3,7 @@ import type { CSSProperties, DragEvent, ReactNode } from 'react';
 import type {
   BookSummary,
   ImportFailure,
+  HighlightColor,
   OpenedBook,
   ReaderChapter,
   ReaderImage,
@@ -18,7 +19,11 @@ import { makePages, safeBoundary, pageForPosition } from './pagination';
 import { bookImageStyle, contentRuns } from './book-content';
 import type { ContentDecoration } from './book-content';
 import { AnnotationPanel, useBookAnnotations } from './annotations';
-import type { AnnotationItem, AnnotationView } from './annotations';
+import { ReaderPopover } from './reader-overlays';
+import { referenceText } from './reference-text';
+import type { OverlayAnchor } from './reader-overlays';
+import { ReaderToolbar } from './reader-toolbar';
+import type { AnnotationView } from './annotations';
 import { NotePanel } from './notes';
 import type { NotePanelHandle } from './notes';
 import {
@@ -47,7 +52,7 @@ const DEFAULT_PREFERENCES: ReadingPreferences = {
   lineHeight: 1.6,
   theme: 'light',
   pageMargin: 24,
-  fontFamily: 'default',
+  fontFamily: 'serif',
 };
 
 function estimatePageCapacity(
@@ -97,7 +102,7 @@ function renderImageAwareText(
   startOffset = 0,
   instanceKey = '',
   links: ReaderLink[] = [],
-  onNavigate?: (target: ReadingPosition) => void,
+  onNavigate?: (target: ReadingPosition, anchor: OverlayAnchor) => void,
   decorations: ContentDecoration[] = [],
   onHighlight?: (highlightId: string) => void,
 ): ReactNode[] {
@@ -148,18 +153,32 @@ function renderImageAwareText(
             href={`#reader-${target.chapterId}-${target.blockIndex}-${target.offset}`}
             {...highlightAttributes}
             title={
-              highlightId ? '打开批注；Alt + 点击可跟随原书链接' : undefined
+              highlightId
+                ? '点击打开批注；Alt + 点击查看引用内容'
+                : '查看引用内容'
             }
             onClick={(event) => {
               event.preventDefault();
               if (window.getSelection()?.isCollapsed === false) return;
               if (highlightId && !event.altKey) openHighlight();
-              else onNavigate(target);
+              else {
+                const rect = event.currentTarget.getBoundingClientRect();
+                onNavigate(target, {
+                  left: rect.right,
+                  top: rect.top,
+                  bottom: rect.bottom,
+                });
+              }
             }}
             onKeyDown={(event) => {
               if (highlightId && event.altKey && event.key === 'Enter') {
                 event.preventDefault();
-                onNavigate(target);
+                const rect = event.currentTarget.getBoundingClientRect();
+                onNavigate(target, {
+                  left: rect.right,
+                  top: rect.top,
+                  bottom: rect.bottom,
+                });
               }
             }}
           >
@@ -272,8 +291,28 @@ export function App() {
   );
   const [selection, setSelection] = useState<ReadingRange | null>(null);
   const [shelfNotes, setShelfNotes] = useState<BookSummary | null>(null);
+  const [tocOpen, setTocOpen] = useState(false);
+  const [toolbarOpen, setToolbarOpen] = useState(false);
+  const [selectionAnchor, setSelectionAnchor] = useState<OverlayAnchor | null>(
+    null,
+  );
+  const [annotationAnchor, setAnnotationAnchor] =
+    useState<OverlayAnchor | null>(null);
+  const [reference, setReference] = useState<{
+    anchor: OverlayAnchor;
+    text: string;
+    loading: boolean;
+  } | null>(null);
+  const referenceRequest = useRef(0);
+  const closeReference = useCallback(() => {
+    referenceRequest.current++;
+    setReference(null);
+  }, []);
+  const [draggingSource, setDraggingSource] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const [notesLayout, setNotesLayout] = useState({
-    width: 340,
+    width: 0,
+    ratio: 0.5,
     collapsed: false,
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -328,7 +367,17 @@ export function App() {
     const onSelection = () => {
       const area = readingArea.current;
       if (!area) return;
-      setSelection(readSelection(area, chapter));
+      const selected = readSelection(area, chapter);
+      setSelection(selected);
+      const native = window.getSelection();
+      const rects =
+        selected && native?.rangeCount
+          ? native.getRangeAt(0).getClientRects()
+          : null;
+      const rect = rects?.[0];
+      setSelectionAnchor(
+        rect ? { left: rect.right, top: rect.top, bottom: rect.bottom } : null,
+      );
     };
     document.addEventListener('selectionchange', onSelection);
     return () => document.removeEventListener('selectionchange', onSelection);
@@ -358,10 +407,11 @@ export function App() {
         if (layoutPosition.current) setPosition({ ...layoutPosition.current });
         restorePending.current = true;
         setNotesLayout({
-          width:
-            typeof layout.width === 'number' && Number.isFinite(layout.width)
-              ? Math.max(260, Math.min(640, layout.width))
-              : 340,
+          width: 0,
+          ratio:
+            typeof layout.ratio === 'number' && Number.isFinite(layout.ratio)
+              ? Math.max(0.25, Math.min(0.75, layout.ratio))
+              : 0.5,
           collapsed: layout.collapsed === true,
         });
       })
@@ -596,9 +646,18 @@ export function App() {
     };
   }, [chapter]);
 
-  const narrowNotes = viewport.width < 1100;
-  const maxNotesWidth = Math.max(260, Math.min(640, viewport.width - 700));
-  const visibleNotesWidth = Math.min(notesLayout.width, maxNotesWidth);
+  const narrowNotes = viewport.width < 700;
+  const splitWidth = Math.max(
+    1,
+    viewport.width - (tocOpen && !focusMode ? 220 : 0) - 10,
+  );
+  const maxNotesWidth = Math.max(220, splitWidth * 0.75);
+  const visibleNotesWidth = Math.round(
+    Math.max(
+      Math.min(220, splitWidth / 2),
+      Math.min(splitWidth * notesLayout.ratio, maxNotesWidth),
+    ),
+  );
   const notesVisible =
     !focusMode && (narrowNotes ? drawerOpen : !notesLayout.collapsed);
   const layoutPosition = useRef<ReadingPosition | null>(null);
@@ -639,6 +698,7 @@ export function App() {
   const revealNotes = () => {
     if (!notesVisible) {
       preserveReaderPosition();
+      setFocusMode(false);
       if (narrowNotes) setDrawerOpen(true);
       else {
         const next = { ...notesLayout, collapsed: false };
@@ -717,6 +777,7 @@ export function App() {
       setCrossStart(null);
       setJumpRange(null);
       setAnnotationView(null);
+      closeReference();
       setOpened(null);
       setChapter(null);
       setDrawerOpen(false);
@@ -773,6 +834,9 @@ export function App() {
         setDrawerOpen(false);
         draggedSelection.current = null;
         dragToken.current = null;
+        closeReference();
+        setTocOpen(false);
+        setToolbarOpen(false);
         setOpened(result);
         setBooks((items) =>
           items.map((item) =>
@@ -815,6 +879,9 @@ export function App() {
         });
         clearSelection();
         setCrossStart(null);
+        closeReference();
+        setAnnotationView(null);
+        setAnnotationAnchor(null);
         setChapter(nextChapter);
         setPageIndex(0);
         restorePending.current = true;
@@ -830,12 +897,43 @@ export function App() {
         setBusy(false);
       }
     },
-    [opened, position, persistReading, clearSelection],
+    [opened, position, persistReading, clearSelection, closeReference],
   );
 
-  const followBookLink = (target: ReadingPosition) => {
-    linkFocusPending.current = true;
-    void loadChapter(target.chapterId, target);
+  const followBookLink = async (
+    target: ReadingPosition,
+    anchor: OverlayAnchor,
+  ) => {
+    if (!opened) return;
+    const request = ++referenceRequest.current;
+    const bookId = opened.book.bookId;
+    setReference({ anchor, text: '', loading: true });
+    try {
+      const source =
+        target.chapterId === chapter?.id
+          ? chapter
+          : await window.reader.readChapter({
+              bookId,
+              chapterId: target.chapterId,
+            });
+      if (
+        referenceRequest.current !== request ||
+        activeBook.current?.bookId !== bookId
+      )
+        return;
+      setReference({
+        anchor,
+        text: referenceText(source, target) || '此引用没有可显示的文字。',
+        loading: false,
+      });
+    } catch {
+      if (referenceRequest.current === request)
+        setReference({
+          anchor,
+          text: '引用暂时无法读取，请重试。',
+          loading: false,
+        });
+    }
   };
 
   const pages = useMemo(
@@ -849,9 +947,10 @@ export function App() {
                 viewport.width -
                 (focusMode
                   ? 0
-                  : narrowNotes
-                    ? 200
-                    : 280 + (notesLayout.collapsed ? 0 : visibleNotesWidth)),
+                  : (tocOpen ? 220 : 0) +
+                    (notesVisible && !narrowNotes
+                      ? visibleNotesWidth + 12
+                      : 0)),
             }),
           )
         : [],
@@ -862,8 +961,9 @@ export function App() {
       viewport,
       focusMode,
       narrowNotes,
-      notesLayout,
       visibleNotesWidth,
+      tocOpen,
+      notesVisible,
     ],
   );
   const pageCount = Math.max(1, pages.length);
@@ -917,6 +1017,16 @@ export function App() {
     if (annotations.busy) return;
     if (focusMode) preserveReaderPosition();
     setFocusMode(false);
+    const element = readingArea.current?.querySelector<HTMLElement>(
+      `[data-highlight-id="${highlightId}"]`,
+    );
+    const rect = element?.getBoundingClientRect();
+    if (rect)
+      setAnnotationAnchor({
+        left: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      });
     setAnnotationView({ kind: 'detail', highlightId });
   };
   const jumpToRange = async (range: ReadingRange) => {
@@ -929,9 +1039,6 @@ export function App() {
     }
     jumpTimer.current = setTimeout(() => setJumpRange(null), 1800);
     if (narrowNotes) setDrawerOpen(false);
-  };
-  const jumpToAnnotation = async ({ resolution }: AnnotationItem) => {
-    if (resolution.status !== 'lost') await jumpToRange(resolution.range);
   };
 
   const queueNoteOperation = (operation: () => Promise<void>) => {
@@ -1009,6 +1116,7 @@ export function App() {
     event.dataTransfer.clearData();
     event.dataTransfer.setData('application/x-reader-selection', token);
     event.dataTransfer.effectAllowed = 'copy';
+    setDraggingSource(true);
   };
   const dropNoteSource = async (token: string) => {
     const captured = draggedSelection.current;
@@ -1024,6 +1132,8 @@ export function App() {
     // Consume only our own live drag; never deserialize a dragged range or anchor.
     draggedSelection.current = null;
     dragToken.current = null;
+    setDraggingSource(false);
+    setDropActive(false);
     await insertNoteSelection(captured.range);
   };
   const importNoteAnnotations = (single = false) => {
@@ -1078,19 +1188,18 @@ export function App() {
     });
   };
 
-  const closeAnnotations = () => {
+  const closeAnnotations = (restoreFocus = true) => {
     setAnnotationView(null);
     setShelfAnnotations(null);
-    if (opened)
+    if (restoreFocus && opened)
       requestAnimationFrame(() =>
-        document
-          .getElementById('reader-annotations')
-          ?.focus({ preventScroll: true }),
+        readingArea.current?.focus({ preventScroll: true }),
       );
   };
 
   const writeAnnotation = () => {
     if (!chapter || !selectedRange) return;
+    setAnnotationAnchor(selectionAnchor);
     setAnnotationView({
       kind: 'create',
       range: selectedRange,
@@ -1099,11 +1208,11 @@ export function App() {
     clearSelection();
     setCrossStart(null);
   };
-  const quickHighlight = async () => {
+  const quickHighlight = async (color: HighlightColor) => {
     if (!selectedRange || !opened) return;
     const result = await annotations.change({
       kind: 'create',
-      color: 'yellow',
+      color,
       text: '',
       range: selectedRange,
       contentHash: opened.book.contentHash,
@@ -1111,7 +1220,11 @@ export function App() {
     if (result) {
       clearSelection();
       setCrossStart(null);
-    } else setAnnotationView((current) => current ?? { kind: 'list' });
+      setAnnotationAnchor(null);
+    } else {
+      setAnnotationAnchor(selectionAnchor);
+      setAnnotationView((current) => current ?? { kind: 'list' });
+    }
   };
 
   useEffect(() => {
@@ -1368,7 +1481,11 @@ export function App() {
         stepPage(-1);
       } else if (event.key.toLowerCase() === 't') {
         event.preventDefault();
-        document.getElementById('reader-toc')?.focus();
+        preserveReaderPosition();
+        setTocOpen((value) => !value);
+        requestAnimationFrame(() =>
+          document.getElementById('reader-toc')?.focus(),
+        );
       } else if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
         preserveReaderPosition();
@@ -1418,78 +1535,119 @@ export function App() {
       lineHeight: preferences.lineHeight,
       '--page-margin': `${preferences.pageMargin}px`,
       fontFamily:
-        preferences.fontFamily === 'serif'
-          ? 'Georgia, "Noto Serif CJK SC", "Songti SC", serif'
-          : preferences.fontFamily === 'sans-serif'
-            ? 'Arial, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
-            : preferences.fontFamily === 'monospace'
-              ? 'ui-monospace, "Noto Sans Mono CJK SC", monospace'
-              : '"Segoe UI", "Microsoft YaHei", sans-serif',
+        '"Times New Roman", SimSun, "Songti SC", "Noto Serif CJK SC", serif',
     };
     const chapterIndex = opened.book.chapters.findIndex(
       (item) => item.id === chapter.id,
     );
     return (
       <main
-        className={`${styles.readerShell} ${themeClass} ${focusMode ? styles.focusMode : ''}`}
+        className={`${styles.readerShell} ${themeClass} ${focusMode ? styles.focusMode : ''} ${narrowNotes ? styles.narrowReader : ''}`}
       >
+        <div
+          className={styles.topEdge}
+          onMouseEnter={() => setToolbarOpen(true)}
+          onMouseLeave={() => setToolbarOpen(false)}
+        />
+        <button
+          className={styles.leftEdge}
+          aria-label="显示目录"
+          title="目录 (T)"
+          onMouseEnter={() => {
+            preserveReaderPosition();
+            setTocOpen(true);
+          }}
+          onClick={() => {
+            preserveReaderPosition();
+            setTocOpen(true);
+          }}
+        >
+          ☰
+        </button>
         {!focusMode && (
-          <header className={styles.readerHeader}>
+          <header
+            className={styles.readerHeader}
+            data-open={toolbarOpen}
+            onMouseEnter={() => setToolbarOpen(true)}
+            onMouseLeave={() => setToolbarOpen(false)}
+          >
             <button
               className={styles.backButton}
+              aria-label="返回书架"
+              title="返回书架"
               onClick={() => void closeReader()}
             >
-              ← <span>书架</span>
+              <span aria-hidden="true">←</span>
             </button>
             <div className={styles.readerBookTitle}>
               <strong>{opened.book.title}</strong>
               <span>{chapter.title}</span>
             </div>
+            <ReaderToolbar
+              preferences={preferences}
+              update={updatePreferences}
+              notesVisible={notesVisible}
+              toggleNotes={toggleNotes}
+              notesToggle={notesToggle}
+              toggleFocus={toggleFocus}
+            />
             <div className={styles.saveState} role="status">
               {saving ? '保存中…' : saveFailed ? '保存失败' : '进度已保存'}
             </div>
           </header>
         )}
         <div
-          className={`${styles.readerLayout} ${!notesVisible || narrowNotes ? styles.notesCollapsed : ''}`}
+          className={`${styles.readerLayout} ${!notesVisible || narrowNotes ? styles.notesCollapsed : ''} ${tocOpen && !focusMode ? styles.tocExpanded : ''}`}
           style={
             {
               ...typographyStyle,
               '--notes-width': `${visibleNotesWidth}px`,
+              '--toc-width': tocOpen && !focusMode ? '220px' : '0px',
             } as ReaderStyle
           }
         >
-          {!focusMode &&
-            (annotationView ? (
-              <aside className={styles.annotationAside}>
-                <AnnotationPanel
-                  book={opened.book}
-                  controller={annotations}
-                  view={annotationView}
-                  setView={setAnnotationView}
-                  close={closeAnnotations}
-                  jump={jumpToAnnotation}
-                />
-              </aside>
-            ) : (
-              <aside className={styles.toc} aria-label="目录">
-                <p>目录</p>
-                <nav id="reader-toc" tabIndex={-1}>
-                  {opened.book.chapters.map((item, index) => (
-                    <button
-                      key={item.id}
-                      className={
-                        item.id === chapter.id ? styles.activeChapter : ''
-                      }
-                      onClick={() => void loadChapter(item.id)}
-                    >
-                      <span>{String(index + 1).padStart(2, '0')}</span>
-                      {item.title}
-                    </button>
-                  ))}
-                </nav>
-              </aside>
-            ))}
+          {!focusMode && (
+            <aside
+              className={styles.toc}
+              aria-label="目录"
+              data-open={tocOpen}
+              inert={!tocOpen}
+              onMouseLeave={() => {
+                preserveReaderPosition();
+                setTocOpen(false);
+              }}
+            >
+              <div className={styles.tocHeading}>
+                <span>目录</span>
+                <button
+                  aria-label="隐藏目录"
+                  onClick={() => {
+                    preserveReaderPosition();
+                    setTocOpen(false);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <nav id="reader-toc" tabIndex={-1}>
+                {opened.book.chapters.map((item, index) => (
+                  <button
+                    key={item.id}
+                    className={
+                      item.id === chapter.id ? styles.activeChapter : ''
+                    }
+                    onClick={() => {
+                      void loadChapter(item.id);
+                      setTocOpen(false);
+                    }}
+                  >
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    {item.title}
+                  </button>
+                ))}
+              </nav>
+            </aside>
+          )}
           {notesVisible && !narrowNotes && (
             <div
               className={styles.notesSeparator}
@@ -1529,7 +1687,11 @@ export function App() {
                               (event.key === 'ArrowLeft' ? 20 : -20),
                           ),
                         );
-                const next = { ...notesLayout, width };
+                const next = {
+                  ...notesLayout,
+                  width,
+                  ratio: width / splitWidth,
+                };
                 setNotesLayout(next);
                 persistNotesLayout(next);
               }}
@@ -1558,19 +1720,28 @@ export function App() {
                 setNotesLayout((current) => ({
                   ...current,
                   width: resize.next,
+                  ratio: resize.next / splitWidth,
                 }));
               }}
               onPointerUp={(event) => {
                 const resize = notesResize.current;
                 if (!resize) return;
                 notesResize.current = null;
-                persistNotesLayout({ ...notesLayout, width: resize.next });
+                persistNotesLayout({
+                  ...notesLayout,
+                  width: resize.next,
+                  ratio: resize.next / splitWidth,
+                });
                 event.currentTarget.releasePointerCapture(event.pointerId);
               }}
               onLostPointerCapture={() => {
                 const resize = notesResize.current;
                 if (resize) {
-                  persistNotesLayout({ ...notesLayout, width: resize.next });
+                  persistNotesLayout({
+                    ...notesLayout,
+                    width: resize.next,
+                    ratio: resize.next / splitWidth,
+                  });
                   notesResize.current = null;
                 }
               }}
@@ -1595,18 +1766,16 @@ export function App() {
             aria-modal={narrowNotes && notesVisible ? true : undefined}
             aria-label="本书笔记"
           >
-            <div className={styles.notesDockHeader}>
-              <strong>本书笔记</strong>
-              <button
-                onClick={() => {
-                  toggleNotes();
-                  notesToggle.current?.focus();
-                }}
-                aria-label={narrowNotes ? '关闭笔记抽屉' : '收起笔记'}
-              >
-                {narrowNotes ? '关闭' : '收起'}
-              </button>
-            </div>
+            <button
+              className={styles.readerNotesClose}
+              onClick={() => {
+                toggleNotes();
+                notesToggle.current?.focus();
+              }}
+              aria-label={narrowNotes ? '关闭笔记抽屉' : '收起笔记'}
+            >
+              ×
+            </button>
             <NotePanel
               ref={notePanel}
               key={opened.book.bookId}
@@ -1619,239 +1788,6 @@ export function App() {
             />
           </aside>
           <section className={styles.readingColumn}>
-            {!focusMode && (
-              <div className={styles.readerToolbar}>
-                <div className={styles.modeSwitch} aria-label="阅读模式">
-                  <button
-                    aria-pressed={preferences.mode === 'scroll'}
-                    onClick={() => updatePreferences({ mode: 'scroll' })}
-                  >
-                    滚动
-                  </button>
-                  <button
-                    aria-pressed={preferences.mode === 'paginated'}
-                    onClick={() => updatePreferences({ mode: 'paginated' })}
-                  >
-                    分页
-                  </button>
-                </div>
-                <div className={styles.readingControls}>
-                  <button
-                    aria-label="缩小字号"
-                    title="缩小字号"
-                    onClick={() =>
-                      updatePreferences({
-                        fontSize: Math.max(12, preferences.fontSize - 1),
-                      })
-                    }
-                  >
-                    A−
-                  </button>
-                  <span>{preferences.fontSize}px</span>
-                  <button
-                    aria-label="增大字号"
-                    title="增大字号"
-                    onClick={() =>
-                      updatePreferences({
-                        fontSize: Math.min(36, preferences.fontSize + 1),
-                      })
-                    }
-                  >
-                    A+
-                  </button>
-                  <label>
-                    行距{' '}
-                    <select
-                      value={preferences.lineHeight}
-                      onChange={(event) =>
-                        updatePreferences({
-                          lineHeight: Number(event.target.value),
-                        })
-                      }
-                    >
-                      <option value="1.2">紧凑</option>
-                      <option value="1.5">舒适</option>
-                      <option value="1.6">标准</option>
-                      <option value="2">宽松</option>
-                      <option value="2.4">最大</option>
-                    </select>
-                  </label>
-                  <label>
-                    边距{' '}
-                    <select
-                      className={styles.marginSelect}
-                      value={preferences.pageMargin}
-                      onChange={(event) =>
-                        updatePreferences({
-                          pageMargin: Number(event.target.value),
-                        })
-                      }
-                    >
-                      <option value="12">窄</option>
-                      <option value="24">标准</option>
-                      <option value="40">宽</option>
-                      <option value="64">最宽</option>
-                    </select>
-                  </label>
-                  <label>
-                    字体{' '}
-                    <select
-                      value={preferences.fontFamily}
-                      onChange={(event) =>
-                        updatePreferences({
-                          fontFamily: event.target
-                            .value as ReadingPreferences['fontFamily'],
-                        })
-                      }
-                    >
-                      <option value="default">系统</option>
-                      <option value="serif">宋体</option>
-                      <option value="sans-serif">无衬线</option>
-                      <option value="monospace">等宽</option>
-                    </select>
-                  </label>
-                </div>
-                <div className={styles.themeSwitch} aria-label="主题">
-                  <button
-                    title="浅色"
-                    aria-label="浅色主题"
-                    aria-pressed={preferences.theme === 'light'}
-                    onClick={() => updatePreferences({ theme: 'light' })}
-                  >
-                    ☼
-                  </button>
-                  <button
-                    title="护眼"
-                    aria-label="护眼主题"
-                    aria-pressed={preferences.theme === 'sepia'}
-                    onClick={() => updatePreferences({ theme: 'sepia' })}
-                  >
-                    ◐
-                  </button>
-                  <button
-                    title="深色"
-                    aria-label="深色主题"
-                    aria-pressed={preferences.theme === 'dark'}
-                    onClick={() => updatePreferences({ theme: 'dark' })}
-                  >
-                    ☾
-                  </button>
-                  <button title="专注模式 (F)" onClick={toggleFocus}>
-                    专注
-                  </button>
-                </div>
-                <div className={styles.annotationActions} aria-label="选区操作">
-                  <button
-                    id="reader-annotations"
-                    aria-expanded={!!annotationView}
-                    disabled={annotations.busy}
-                    onClick={() =>
-                      annotationView
-                        ? closeAnnotations()
-                        : setAnnotationView({ kind: 'list' })
-                    }
-                  >
-                    全书划线
-                  </button>
-                  <button
-                    id="reader-notes-toggle"
-                    ref={notesToggle}
-                    aria-expanded={notesVisible}
-                    aria-controls="reader-notes"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={toggleNotes}
-                  >
-                    {notesVisible ? '收起笔记' : '打开笔记'}
-                  </button>
-                  <button
-                    disabled={
-                      noteActionBusy ||
-                      annotations.busy ||
-                      !annotations.snapshot?.items.some(
-                        (item) => item.annotation,
-                      )
-                    }
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => importNoteAnnotations()}
-                  >
-                    全部批注汇入笔记
-                  </button>
-                  {annotationView?.kind === 'detail' && (
-                    <button
-                      disabled={
-                        noteActionBusy ||
-                        annotations.busy ||
-                        !annotations.snapshot?.items.some(
-                          (item) =>
-                            item.highlightId === annotationView.highlightId &&
-                            item.annotation,
-                        )
-                      }
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => importNoteAnnotations(true)}
-                    >
-                      此条批注汇入笔记
-                    </button>
-                  )}
-                  {selectedRange && (
-                    <>
-                      <button
-                        disabled={busy || noteActionBusy}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => void insertNoteSelection(selectedRange)}
-                      >
-                        插入选区到笔记
-                      </button>
-                      <button
-                        disabled={!annotations.canChange || busy}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => void quickHighlight()}
-                      >
-                        划线
-                      </button>
-                      <button
-                        disabled={!annotations.canChange || busy}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={writeAnnotation}
-                      >
-                        写批注
-                      </button>
-                      {!crossStart &&
-                        preferences.mode === 'paginated' &&
-                        pageIndex + 1 < pageCount && (
-                          <button
-                            disabled={busy}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => {
-                              setCrossStart(selectedRange);
-                              stepPage(1);
-                            }}
-                          >
-                            跨页选取
-                          </button>
-                        )}
-                    </>
-                  )}
-                  {crossStart ? (
-                    <>
-                      <span role="status">
-                        已保留起点，请在同章后续页选择终点。
-                      </span>
-                      <button
-                        onClick={() => {
-                          setCrossStart(null);
-                          clearSelection();
-                        }}
-                      >
-                        取消跨页选取
-                      </button>
-                    </>
-                  ) : (
-                    !selectedRange && <span>选中文字后可划线或写批注</span>
-                  )}
-                </div>
-              </div>
-            )}
             <div className={styles.chapterHeading}>
               <span>第 {chapterIndex + 1} 章</span>
               <h1>{chapter.title}</h1>
@@ -1862,10 +1798,13 @@ export function App() {
                 className={styles.scrollContent}
                 style={typographyStyle}
                 aria-label="正文"
+                tabIndex={-1}
                 onDragStart={startSourceDrag}
                 onDragEnd={() => {
                   draggedSelection.current = null;
                   dragToken.current = null;
+                  setDraggingSource(false);
+                  setDropActive(false);
                 }}
               >
                 {chapter.blocks.map((block, index) => (
@@ -1900,10 +1839,13 @@ export function App() {
                   className={styles.pageContent}
                   style={typographyStyle}
                   aria-label="正文"
+                  tabIndex={-1}
                   onDragStart={startSourceDrag}
                   onDragEnd={() => {
                     draggedSelection.current = null;
                     dragToken.current = null;
+                    setDraggingSource(false);
+                    setDropActive(false);
                   }}
                   aria-live="polite"
                 >
@@ -1985,11 +1927,149 @@ export function App() {
             {message}
           </p>
         )}
-        {!focusMode && (
-          <footer className={styles.readerFooter}>
-            <span>阅读位置按章节内容保存</span>
-            <span>快捷键：← → 翻页 · T 目录 · F 专注 · Esc 退出专注</span>
-          </footer>
+        {selectedRange && selectionAnchor && !draggingSource && (
+          <div
+            className={styles.selectionPalette}
+            role="toolbar"
+            aria-label="选区操作"
+            style={{
+              left: Math.max(
+                16,
+                Math.min(selectionAnchor.left + 8, viewport.width - 240),
+              ),
+              top: Math.max(12, selectionAnchor.top - 46),
+            }}
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            {(['yellow', 'green', 'pink', 'blue'] as HighlightColor[]).map(
+              (color, index) => (
+                <button
+                  key={color}
+                  data-highlight-color={color}
+                  aria-label={`${['黄色', '绿色', '粉色', '蓝色'][index]}划线`}
+                  title={`${['黄色', '绿色', '粉色', '蓝色'][index]}划线`}
+                  disabled={!annotations.canChange || busy}
+                  onClick={() => void quickHighlight(color)}
+                >
+                  ●
+                </button>
+              ),
+            )}
+            <button
+              aria-label="写批注"
+              title="写批注"
+              disabled={!annotations.canChange || busy}
+              onClick={writeAnnotation}
+            >
+              ✎
+            </button>
+            <button
+              aria-label="插入选区到笔记"
+              title="插入选区到笔记"
+              disabled={busy || noteActionBusy}
+              onClick={() => void insertNoteSelection(selectedRange)}
+            >
+              ↗
+            </button>
+            {!crossStart &&
+              preferences.mode === 'paginated' &&
+              pageIndex + 1 < pageCount && (
+                <button
+                  aria-label="跨页选取"
+                  title="跨页选取"
+                  onClick={() => {
+                    setCrossStart(selectedRange);
+                    stepPage(1);
+                  }}
+                >
+                  ⇥
+                </button>
+              )}
+          </div>
+        )}
+        {crossStart && (
+          <button
+            className={styles.crossSelection}
+            onClick={() => {
+              setCrossStart(null);
+              clearSelection();
+            }}
+          >
+            × 取消跨页选取
+          </button>
+        )}
+        {reference && (
+          <ReaderPopover
+            anchor={reference.anchor}
+            label="引用内容"
+            close={closeReference}
+          >
+            <p aria-live="polite">
+              {reference.loading ? '正在读取…' : reference.text}
+            </p>
+          </ReaderPopover>
+        )}
+        {annotationView && annotationAnchor && (
+          <ReaderPopover
+            anchor={annotationAnchor}
+            label="划线批注"
+            close={closeAnnotations}
+            dismissOutside={() => closeAnnotations(false)}
+          >
+            <AnnotationPanel
+              book={opened.book}
+              controller={annotations}
+              view={annotationView}
+              setView={setAnnotationView}
+              close={closeAnnotations}
+            />
+            <div className={styles.annotationImportActions}>
+              <button
+                aria-label="此条批注汇入笔记"
+                title="此条批注汇入笔记"
+                disabled={
+                  annotationView.kind !== 'detail' ||
+                  noteActionBusy ||
+                  annotations.busy
+                }
+                onClick={() => importNoteAnnotations(true)}
+              >
+                ↗
+              </button>
+              <button
+                aria-label="全部批注汇入笔记"
+                title="全部批注汇入笔记"
+                disabled={noteActionBusy || annotations.busy}
+                onClick={() => importNoteAnnotations(false)}
+              >
+                ⇉
+              </button>
+            </div>
+          </ReaderPopover>
+        )}
+        {draggingSource && !notesVisible && (
+          <div
+            className={styles.sourceDropZone}
+            data-active={dropActive}
+            role="region"
+            aria-label="拖到此处打开笔记"
+            onDragOver={(event) => {
+              if (dragToken.current) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                setDropActive(true);
+              }
+            }}
+            onDragLeave={() => setDropActive(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              void dropNoteSource(
+                event.dataTransfer.getData('application/x-reader-selection'),
+              );
+            }}
+          >
+            ↗ note
+          </div>
         )}
       </main>
     );

@@ -102,6 +102,7 @@ export const NotePanel = forwardRef<NotePanelHandle, Props>(function NotePanel(
         editor.current.contains(selection.focusNode)
       ) {
         caret.current = selection.getRangeAt(0).cloneRange();
+        notify();
       }
     };
     let closingAfterSave = false;
@@ -255,7 +256,34 @@ export const NotePanel = forwardRef<NotePanelHandle, Props>(function NotePanel(
   const command = (name: string, value?: string) => {
     if (!editable()) return;
     restoreCaret();
-    document.execCommand(name, false, value);
+    const block = document
+      .queryCommandValue('formatBlock')
+      .toLowerCase()
+      .replace(/[<>]/g, '');
+    // Block styles are toggles, just like bold and list commands. Returning to
+    // a paragraph must also leave an enclosing list rather than styling its item.
+    if (name === 'formatBlock' && (value === 'p' || block === value)) {
+      if (document.queryCommandState('insertUnorderedList'))
+        document.execCommand('insertUnorderedList', false);
+      if (document.queryCommandState('insertOrderedList'))
+        document.execCommand('insertOrderedList', false);
+      document.execCommand('formatBlock', false, 'p');
+    } else document.execCommand(name, false, value);
+    const selection = window.getSelection();
+    if (selection?.rangeCount)
+      caret.current = selection.getRangeAt(0).cloneRange();
+    commit();
+    notify();
+  };
+  const clearFormatting = () => {
+    if (!editable()) return;
+    restoreCaret();
+    document.execCommand('removeFormat', false);
+    document.execCommand('formatBlock', false, 'p');
+    if (document.queryCommandState('insertUnorderedList'))
+      document.execCommand('insertUnorderedList', false);
+    if (document.queryCommandState('insertOrderedList'))
+      document.execCommand('insertOrderedList', false);
     commit();
   };
   const jump = async (anchorId: string) => {
@@ -297,45 +325,89 @@ export const NotePanel = forwardRef<NotePanelHandle, Props>(function NotePanel(
       </header>
       <div className={styles.toolbar} aria-label="笔记格式">
         {[
-          ['加粗', 'bold', undefined],
-          ['段落', 'formatBlock', 'p'],
-          ['标题', 'formatBlock', 'h2'],
-          ['列表', 'insertUnorderedList', undefined],
-          ['有序列表', 'insertOrderedList', undefined],
-          ['引用', 'formatBlock', 'blockquote'],
-        ].map(([label, action, value]) => (
+          { label: '加粗', icon: 'B', action: 'bold' },
+          { label: '段落', icon: '¶', action: 'formatBlock', value: 'p' },
+          { label: '标题', icon: 'H₂', action: 'formatBlock', value: 'h2' },
+          { label: '项目列表', icon: '•≡', action: 'insertUnorderedList' },
+          { label: '有序列表', icon: '1≡', action: 'insertOrderedList' },
+          {
+            label: '引用',
+            icon: '❞',
+            action: 'formatBlock',
+            value: 'blockquote',
+          },
+        ].map(({ label, icon, action, value }) => (
           <button
             key={label}
+            type="button"
+            title={label}
+            aria-label={label}
+            aria-pressed={
+              action === 'bold'
+                ? Boolean(document.queryCommandState('bold'))
+                : action === 'formatBlock'
+                  ? document
+                      .queryCommandValue('formatBlock')
+                      .toLowerCase()
+                      .replace(/[<>]/g, '') === value
+                  : action === 'insertUnorderedList'
+                    ? Boolean(document.queryCommandState('insertUnorderedList'))
+                    : action === 'insertOrderedList'
+                      ? Boolean(document.queryCommandState('insertOrderedList'))
+                      : undefined
+            }
             disabled={!ready}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => command(action!, value)}
+            onClick={() => command(action, value)}
           >
-            {label}
+            {icon}
           </button>
         ))}
         <button
+          type="button"
+          title="清除格式"
+          aria-label="清除格式"
+          disabled={!ready}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={clearFormatting}
+        >
+          Tx
+        </button>
+        <button
+          type="button"
+          title="撤销"
+          aria-label="撤销"
           disabled={!ready || historyIndex.current === 0}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => undo()}
         >
-          撤销
+          ↶
         </button>
         <button
+          type="button"
+          title="重做"
+          aria-label="重做"
           disabled={
             !ready || historyIndex.current >= history.current.length - 1
           }
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => undo(true)}
         >
-          重做
+          ↷
         </button>
         <button
+          type="button"
+          title="立即保存"
+          aria-label="立即保存"
           disabled={!ready || state === 'saving'}
           onClick={() => void session.current?.flush()}
         >
-          立即保存
+          ⇧
         </button>
         <button
+          type="button"
+          title="导出恢复副本"
+          aria-label="导出恢复副本"
           disabled={!ready}
           onClick={() => {
             void window.reader
@@ -355,7 +427,7 @@ export const NotePanel = forwardRef<NotePanelHandle, Props>(function NotePanel(
               );
           }}
         >
-          导出恢复副本
+          ⤓
         </button>
       </div>
       <div
