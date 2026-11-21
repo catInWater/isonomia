@@ -190,6 +190,12 @@ directory. Electron sandbox stays enabled. Native dialogs receive synthetic test
 responses; the storage/library/notes bridge is real. Windows UI/installer testing
 is still a separate manual acceptance requirement.
 
+## Releases
+
+The official Windows x64 NSIS installer is published on [GitHub Releases](https://github.com/catInWater/isonomia/releases). A release tag must match the root package version; the Windows release workflow tests and builds that tagged source, then attaches `Reader-<version>-windows-x64-setup.exe` and `SHA256SUMS.txt`. The matching source is available from the repository tag and GitHub's source archive.
+
+Installers are currently unsigned, so Windows may display publisher or SmartScreen warnings. CI verifies the installer file exists but does not install, launch, or uninstall it; Windows real-device acceptance remains outstanding. The NSIS uninstall policy preserves application data. Review the release notes and only install software from a source you trust.
+
 ## Packaging
 
 ```sh
@@ -201,16 +207,19 @@ npm exec -- nx run reader:make
 ```
 
 Both targets first build the production shell and UI. Outputs go to
-`dist/packages` and `dist/executables`, respectively. Publishing is disabled.
-The CI Windows job builds an unsigned x64 NSIS installer and retains only the
-root-level installer as a short-lived artifact without release/publish steps; the
-`win-unpacked` executable is not a standalone portable app and must not be copied
-out of its folder (it needs adjacent Electron runtime files including `icudtl.dat`
-and `resources`). CI builds the installer but does not install, launch, or uninstall
-it. The NSIS uninstall policy preserves application data; verify it explicitly
-against a throwaway Windows profile before release. Platform signing, icons, update service and release metadata still need
-to be configured. Packaging options live in
+`dist/packages` and `dist/executables`, respectively. Publishing is disabled for
+these local targets. The CI Windows job retains an unsigned x64 NSIS installer as a
+short-lived artifact; the `win-unpacked` executable is not a standalone portable app
+and must not be copied out of its folder (it needs adjacent Electron runtime files
+including `icudtl.dat` and `resources`). Packaging options live in
 `apps/reader/src/app/options/maker.options.json`.
+
+## License
+
+Reader is licensed under the GNU Affero General Public License v3.0 or later
+([AGPL-3.0-or-later](LICENSE)). The full license is also bundled with the
+application and available from its “About and license” screen. Third-party
+components retain their respective licenses.
 
 The HTML declares `<base href="./">`, and Webpack uses `publicPath: './'`.
 `NxAppWebpackPlugin.baseHref` is disabled because Nx 22 incorrectly rewrites
