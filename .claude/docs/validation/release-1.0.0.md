@@ -1,7 +1,7 @@
 # Reader 1.0.0 发布与许可证验证报告
 
 - **规格 / 票据 / ADR：** 发布范围为 1.0.0 Windows x64 NSIS 安装包、仓库许可证元数据、应用内法律告知与 README；无新增产品规格。
-- **被测版本 / 日期：** `origin/main` `3d3c902fd26e4f5d1ab6c980795541cce9be45d8` + release worktree 未提交改动；2026-11-22。
+- **被测版本 / 日期：** 基线 `origin/main` `3d3c902fd26e4f5d1ab6c980795541cce9be45d8` + `chore/release-1.0.0` 候选源码；检查在提交前工作树执行，代码与 PR head 相同；2026-11-22。
 - **环境 / 数据：** Linux x86_64、Node 24.20.0、Electron 34.5.8、Nx 22、production build；GUI 使用 synthetic EPUB/TXT、独立临时 profile、headless GNOME Wayland compositor，视口 1236×640，Electron sandbox 保持启用。未读取真实书籍或用户 profile。
 
 ## 验收记录
