@@ -9,6 +9,7 @@ export function ReaderToolbar({
   toggleNotes,
   notesToggle,
   toggleFocus,
+  showLicense,
 }: {
   preferences: ReadingPreferences;
   update: (patch: Partial<ReadingPreferences>) => void;
@@ -16,6 +17,7 @@ export function ReaderToolbar({
   toggleNotes: () => void;
   notesToggle: RefObject<HTMLButtonElement | null>;
   toggleFocus: () => void;
+  showLicense: () => void;
 }) {
   return (
     <div
@@ -126,6 +128,9 @@ export function ReaderToolbar({
         onClick={toggleNotes}
       >
         note
+      </button>
+      <button aria-label="关于与许可" title="关于与许可" onClick={showLicense}>
+        ⓘ
       </button>
     </div>
   );

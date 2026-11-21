@@ -16,6 +16,9 @@ module.exports = {
       htmlAcceptHeaders: ['text/html', 'application/xhtml+xml'],
     },
   },
+  module: {
+    rules: [{ test: /\.txt$/i, type: 'asset/source' }],
+  },
   plugins: [
     new NxAppWebpackPlugin({
       tsConfig: './tsconfig.app.json',

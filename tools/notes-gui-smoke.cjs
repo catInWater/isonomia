@@ -113,6 +113,25 @@ app.on('web-contents-created', (_event, contents) => {
         'shelf ready',
       );
       if (stage === 'initial') {
+        await click('关于与许可');
+        await wait(
+          `document.querySelector('[aria-label="许可证信息"]')?.textContent.includes('AGPL-3.0-or-later')`,
+          'license notice is accessible from the shelf',
+        );
+        const legalNotice = await js(
+          `document.querySelector('[aria-label="许可证信息"]').textContent`,
+        );
+        assert.match(legalNotice, /复制、分发和修改/);
+        assert.match(legalNotice, /不提供任何明示或默示担保/);
+        await js(
+          `document.querySelector('[aria-label="许可证信息"] details').open=true`,
+        );
+        await wait(
+          `document.querySelector('[aria-label="许可证信息"] pre')?.textContent.includes('GNU AFFERO GENERAL PUBLIC LICENSE')`,
+          'full AGPL license text is available in the application',
+        );
+        await shot('00-license-notice');
+        await click('关闭关于与许可');
         await click('导入书籍');
         await wait(
           `document.body.innerText.includes('synthetic-notes-a') && document.body.innerText.includes('synthetic-notes-b')`,

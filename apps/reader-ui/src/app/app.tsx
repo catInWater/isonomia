@@ -23,6 +23,7 @@ import { ReaderPopover } from './reader-overlays';
 import { referenceText } from './reference-text';
 import type { OverlayAnchor } from './reader-overlays';
 import { ReaderToolbar } from './reader-toolbar';
+import { LegalNotice } from './legal-notice';
 import type { AnnotationView } from './annotations';
 import { NotePanel } from './notes';
 import type { NotePanelHandle } from './notes';
@@ -317,6 +318,8 @@ export function App() {
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [noteActionBusy, setNoteActionBusy] = useState(false);
+  const [legalNoticeOpen, setLegalNoticeOpen] = useState(false);
+  const legalNoticeReturnFocus = useRef<HTMLElement | null>(null);
   const notePanel = useRef<NotePanelHandle>(null);
   const shelfNotePanel = useRef<NotePanelHandle>(null);
   const notesContainer = useRef<HTMLElement>(null);
@@ -338,6 +341,14 @@ export function App() {
   const dragToken = useRef<string | null>(null);
   const [crossStart, setCrossStart] = useState<ReadingRange | null>(null);
   const [jumpRange, setJumpRange] = useState<ReadingRange | null>(null);
+  const openLegalNotice = () => {
+    legalNoticeReturnFocus.current = document.activeElement as HTMLElement;
+    setLegalNoticeOpen(true);
+  };
+  const closeLegalNotice = () => {
+    setLegalNoticeOpen(false);
+    requestAnimationFrame(() => legalNoticeReturnFocus.current?.focus());
+  };
   const annotationBook = opened?.book || shelfAnnotations;
   const annotations = useBookAnnotations(annotationBook);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1590,6 +1601,7 @@ export function App() {
               toggleNotes={toggleNotes}
               notesToggle={notesToggle}
               toggleFocus={toggleFocus}
+              showLicense={openLegalNotice}
             />
             <div className={styles.saveState} role="status">
               {saving ? '保存中…' : saveFailed ? '保存失败' : '进度已保存'}
@@ -2047,6 +2059,7 @@ export function App() {
             </div>
           </ReaderPopover>
         )}
+        {legalNoticeOpen && <LegalNotice onClose={closeLegalNotice} />}
         {draggingSource && !notesVisible && (
           <div
             className={styles.sourceDropZone}
@@ -2085,13 +2098,22 @@ export function App() {
             {sorted.length ? `${sorted.length} 本书` : '导入一本书，开始阅读。'}
           </p>
         </div>
-        <button
-          className={styles.primary}
-          onClick={() => void importBooks()}
-          disabled={busy}
-        >
-          {busy ? '处理中…' : '导入书籍'}
-        </button>
+        <div className={styles.headerActions}>
+          <button
+            className={styles.primary}
+            onClick={() => void importBooks()}
+            disabled={busy}
+          >
+            {busy ? '处理中…' : '导入书籍'}
+          </button>
+          <button
+            className={styles.licenseButton}
+            aria-haspopup="dialog"
+            onClick={openLegalNotice}
+          >
+            关于与许可
+          </button>
+        </div>
       </header>
       <section className={styles.toolbar} aria-label="书架工具">
         <label>
@@ -2173,6 +2195,7 @@ export function App() {
           </section>
         </div>
       )}
+      {legalNoticeOpen && <LegalNotice onClose={closeLegalNotice} />}
       {removing && (
         <div
           className={styles.backdrop}

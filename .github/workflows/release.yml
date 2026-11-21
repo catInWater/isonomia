@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NX_DAEMON: 'false'
+  NX_NO_CLOUD: 'true'
+  NX_INTERACTIVE: 'false'
+
+jobs:
+  windows-release:
+    name: Windows x64 release
+    runs-on: windows-2025
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Pin package manager
+        run: npm install --global npm@11.19.0
+      - run: npm ci
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne $version) {
+            throw "Tag '$env:GITHUB_REF_NAME' does not match package version '$version'."
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Lint and typecheck
+        run: npm exec -- nx run-many -t lint typecheck -p reader reader-ui
+      - name: Run tests and fixture checks
+        run: npm exec -- nx run reader:test
+      - name: Validate specification references
+        run: npm exec -- nx run reader:spec-check
+      - name: Build Windows installer
+        run: npm exec -- nx run reader:make
+      - name: Verify and name release assets
+        shell: pwsh
+        run: |
+          $license = 'dist/apps/reader-ui/assets/AGPL-3.0-or-later.txt'
+          if (-not (Test-Path -LiteralPath $license -PathType Leaf)) {
+            throw "Bundled AGPL license is missing: $license"
+          }
+          $installers = @(Get-ChildItem dist/executables -File -Filter '*.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one root-level NSIS installer; found $($installers.Count)."
+          }
+          if ($installers[0].Name -like '*-unpacked*') {
+            throw 'Refusing to publish an unpacked Electron executable as an installer.'
+          }
+          $assetPath = Join-Path $installers[0].DirectoryName "Reader-$env:RELEASE_VERSION-windows-x64-setup.exe"
+          Move-Item -LiteralPath $installers[0].FullName -Destination $assetPath
+          $checksumPath = Join-Path $installers[0].DirectoryName 'SHA256SUMS.txt'
+          $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $assetPath -Leaf)" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+          "RELEASE_ASSET=$assetPath" >> $env:GITHUB_ENV
+          "RELEASE_CHECKSUM=$checksumPath" >> $env:GITHUB_ENV
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/archive/refs/tags/$tag.zip"
+          $notes = @"
+          Unsigned Windows x64 NSIS installer. Windows may show publisher or SmartScreen warnings.
+          Corresponding source code: $sourceUrl
+          "@
+          gh release create $tag $env:RELEASE_ASSET $env:RELEASE_CHECKSUM --title "Reader $tag" --generate-notes --notes $notes --verify-tag
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release publication failed with exit code $LASTEXITCODE."
+          }
