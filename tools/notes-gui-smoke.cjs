@@ -4,18 +4,47 @@ const { app, BrowserWindow, dialog } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { zip } = require('./fixtures.cjs');
 const root = process.env.NOTES_SMOKE_DIR;
 if (!root || !path.isAbsolute(root))
   throw new Error('Set NOTES_SMOKE_DIR to a fresh absolute test directory.');
 const stage = process.env.NOTES_SMOKE_STAGE || 'initial';
 fs.mkdirSync(root, { recursive: true });
 app.setPath('userData', path.join(root, 'profile'));
-const sourceA = path.join(root, 'synthetic-notes-a.txt');
+const sourceA = path.join(root, 'synthetic-notes-a.epub');
 const sourceB = path.join(root, 'synthetic-notes-b.txt');
 if (stage === 'initial') {
+  const paragraphs = [
+    '<p>阶段四原文片段用于稳定回跳。<a href="#foot"><sup>[1]</sup></a></p>',
+    '<p>另一段原文用于拖放引用测试。</p>',
+    ...Array.from(
+      { length: 35 },
+      (_, i) => `<p>合成段落${i}，用于检查分栏调整不会改变阅读位置。</p>`,
+    ),
+    '<p>引用起点 <a href="#foot"><sup>[1]</sup></a>继续阅读。</p>',
+    '<p id="foot">引用目标内容应该在气泡显示，而不是跳走。</p>',
+  ];
   fs.writeFileSync(
     sourceA,
-    `第一章 合成摘录\n阶段四原文片段用于稳定回跳。\n另一段原文用于拖放引用测试。\n${Array.from({ length: 35 }, (_, i) => `合成段落${i}，用于检查分栏调整不会改变阅读位置。`).join('\n')}`,
+    zip([
+      ['mimetype', 'application/epub+zip'],
+      [
+        'META-INF/container.xml',
+        '<container><rootfiles><rootfile full-path="OEBPS/book.opf"/></rootfiles></container>',
+      ],
+      [
+        'OEBPS/book.opf',
+        '<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>synthetic-notes-a</dc:title><dc:creator>Smoke fixture</dc:creator><dc:language>zh-CN</dc:language></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="chapter2" href="chapter2.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/><itemref idref="chapter2"/></spine></package>',
+      ],
+      [
+        'OEBPS/chapter.xhtml',
+        `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章 合成摘录</title></head><body><h1>第一章 合成摘录</h1>${paragraphs.join('')}</body></html>`,
+      ],
+      [
+        'OEBPS/chapter2.xhtml',
+        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第二章 转场测试</title></head><body><h1>第二章 转场测试</h1><p>用于验证跨章后清理旧批注气泡。</p></body></html>',
+      ],
+    ]),
   );
   fs.writeFileSync(sourceB, '第一章 独立书籍\n第二本书的正文与第一本不同。');
 }
@@ -48,7 +77,7 @@ app.on('web-contents-created', (_event, contents) => {
       };
       const click = async (text, scope = 'document') =>
         js(
-          `(() => { const b = [...${scope}.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)} && !b.disabled); if (!b) throw Error('Button unavailable: ' + ${JSON.stringify(text)}); b.click(); })()`,
+          `(() => { const b = [...${scope}.querySelectorAll('button')].find(b => (b.textContent.trim() === ${JSON.stringify(text)} || b.getAttribute('aria-label') === ${JSON.stringify(text)} || b.title === ${JSON.stringify(text)}) && !b.disabled); if (!b) throw Error('Button unavailable: ' + ${JSON.stringify(text)}); b.click(); })()`,
         );
       const noteScope = `document.querySelector('[aria-label="笔记"]')`;
       const saved = () =>
@@ -65,7 +94,7 @@ app.on('web-contents-created', (_event, contents) => {
           `(() => {const article = document.querySelector('article'); const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT); let node; while ((node=walker.nextNode())) { const i=node.textContent.indexOf(${JSON.stringify(text)}); if(i<0)continue; const r=document.createRange(); r.setStart(node,i); r.setEnd(node,i+${text.length}); const s=getSelection();s.removeAllRanges();s.addRange(r);document.dispatchEvent(new Event('selectionchange'));return;}throw Error('Synthetic selection not found');})()`,
         );
         await wait(
-          `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='插入选区到笔记')`,
+          `[...document.querySelectorAll('button')].some(b=>b.getAttribute('aria-label')==='插入选区到笔记')`,
         );
       };
       const shot = async (name) => {
@@ -94,6 +123,106 @@ app.on('web-contents-created', (_event, contents) => {
         await wait(
           `Boolean(document.querySelector('[aria-label="笔记正文"][contenteditable="true"]'))`,
         );
+        assert.equal(
+          await js(
+            `innerWidth===document.documentElement.clientWidth && document.documentElement.scrollWidth<=innerWidth`,
+          ),
+          true,
+          'reader has no horizontal white gutter or page scrollbar',
+        );
+        assert.equal(
+          await js(
+            `document.querySelector('[role="toolbar"][aria-label="阅读控制台"]').getBoundingClientRect().height < 40 && getComputedStyle(document.querySelector('[role="toolbar"][aria-label="阅读控制台"]')).flexWrap === 'nowrap'`,
+          ),
+          true,
+          'reader console stays on one line',
+        );
+        contents.sendInputEvent({ type: 'mouseMove', x: 400, y: 300 });
+        await wait(
+          `document.querySelector('[role="toolbar"][aria-label="阅读控制台"]').getBoundingClientRect().bottom < 10`,
+          'console hides after pointer leaves top edge',
+        );
+        assert.equal(
+          await js(
+            `getComputedStyle(document.querySelector('[aria-label="正文"]').parentElement).fontFamily.includes('Times New Roman') && !document.querySelector('select[aria-label="字体"]')`,
+          ),
+          true,
+          'font is fixed to the requested bilingual serif stack with no chooser',
+        );
+        await js(
+          `getSelection()?.removeAllRanges(); document.dispatchEvent(new Event('selectionchange'))`,
+        );
+        const ratioBeforeToc = await js(
+          `(() => { const a=document.querySelector('[aria-label="正文"]').parentElement.getBoundingClientRect().width; const b=document.querySelector('[aria-label="本书笔记"]').getBoundingClientRect().width; return b/(a+b); })()`,
+        );
+        contents.sendInputEvent({ type: 'mouseMove', x: 1, y: 160 });
+        await wait(
+          `document.querySelector('[aria-label="目录"]').dataset.open==='true'`,
+          'left-edge hover reveals table of contents',
+        );
+        await js(
+          `document.querySelector('button[aria-label="显示目录"]').click()`,
+        );
+        assert.equal(
+          await js(
+            `document.querySelector('[aria-label="目录"]').dataset.open`,
+          ),
+          'true',
+          'clicking the TOC reveal edge leaves the TOC open',
+        );
+        await shot('00-edge-toc');
+        const ratioWithToc = await js(
+          `(() => { const a=document.querySelector('[aria-label="正文"]').parentElement.getBoundingClientRect().width; const b=document.querySelector('[aria-label="本书笔记"]').getBoundingClientRect().width; return b/(a+b); })()`,
+        );
+        assert.ok(
+          Math.abs(ratioBeforeToc - ratioWithToc) < 0.06,
+          'TOC opening preserves reading/note ratio',
+        );
+        await click('隐藏目录');
+        contents.sendInputEvent({ type: 'mouseMove', x: 500, y: 160 });
+        await wait(
+          `document.querySelector('[aria-label="目录"]').dataset.open==='false'`,
+          'TOC leaves remaining reading layout when pointer departs',
+        );
+        contents.sendInputEvent({ type: 'mouseMove', x: 500, y: 1 });
+        await wait(
+          `document.querySelector('[role="toolbar"][aria-label="阅读控制台"]').getBoundingClientRect().top>=0`,
+          'top-edge hover reveals console',
+        );
+        const refTopBefore = await js(
+          `document.querySelector('[aria-label="正文"]').scrollTop`,
+        );
+        await js(
+          `document.querySelector('article a[href^="#reader-"]').click()`,
+        );
+        await wait(
+          `document.querySelector('[aria-label="引用内容"]')?.textContent.includes('引用目标内容应该在气泡显示')`,
+          'reference bubble shows target text',
+        );
+        assert.equal(
+          await js(`document.querySelector('[aria-label="正文"]').scrollTop`),
+          refTopBefore,
+          'citation preview does not jump to target',
+        );
+        await shot('00-reference-bubble');
+        const initialViewportWidth = await js('innerWidth');
+        const [initialWindowWidth, initialWindowHeight] = testWindow.getSize();
+        testWindow.setSize(initialWindowWidth - 120, initialWindowHeight);
+        await wait(
+          `innerWidth < ${initialViewportWidth} && (() => {const e=document.querySelector('[aria-label="引用内容"]');if(!e)return false;const r=e.getBoundingClientRect();return r.left>=16 && r.right<=innerWidth-16;})()`,
+          'reference bubble stays visible after resize',
+        );
+        testWindow.setSize(initialWindowWidth, initialWindowHeight);
+        await wait(
+          `innerWidth===${initialViewportWidth} && Boolean(document.querySelector('[aria-label="引用内容"]'))`,
+          'reference bubble remains after restoring window size',
+        );
+        await click('关闭引用内容');
+        contents.sendInputEvent({
+          type: 'mouseMove',
+          x: 400,
+          y: 300,
+        });
         await type('阶段四笔记：保留用户文字。');
         await saved();
         await js(
@@ -106,6 +235,147 @@ app.on('web-contents-created', (_event, contents) => {
             `Boolean(document.querySelector('[aria-label="笔记正文"] b, [aria-label="笔记正文"] strong'))`,
           ),
           true,
+          'bold style applies',
+        );
+        const selectNote = async () =>
+          js(
+            `(() => { const e=document.querySelector('[aria-label="笔记正文"]'); const w=document.createTreeWalker(e,NodeFilter.SHOW_TEXT); let n; while((n=w.nextNode())) if(n.textContent.includes('阶段四笔记')) { const r=document.createRange(); r.selectNodeContents(n); const s=getSelection(); s.removeAllRanges(); s.addRange(r); document.dispatchEvent(new Event('selectionchange')); return; } throw Error('Note text unavailable'); })()`,
+          );
+        await selectNote();
+        await click('清除格式', noteScope);
+        await saved();
+        assert.equal(
+          await js(
+            `Boolean(document.querySelector('[aria-label="笔记正文"] b, [aria-label="笔记正文"] strong, [aria-label="笔记正文"] h2, [aria-label="笔记正文"] ul, [aria-label="笔记正文"] ol, [aria-label="笔记正文"] blockquote'))`,
+          ),
+          false,
+          'format clear removes inline and block styles',
+        );
+        await selectNote();
+        await click('标题', noteScope);
+        await saved();
+        assert.equal(
+          await js(
+            `Boolean(document.querySelector('[aria-label="笔记正文"] h2'))`,
+          ),
+          true,
+          'heading style applies',
+        );
+        await selectNote();
+        await click('标题', noteScope);
+        await saved();
+        assert.equal(
+          await js(
+            `Boolean(document.querySelector('[aria-label="笔记正文"] h2'))`,
+          ),
+          false,
+          'heading style toggles off on second click',
+        );
+        for (const [label, selector] of [
+          ['项目列表', 'ul'],
+          ['有序列表', 'ol'],
+        ]) {
+          await selectNote();
+          await click(label, noteScope);
+          await saved();
+          assert.equal(
+            await js(
+              `Boolean(document.querySelector('[aria-label="笔记正文"] ${selector}'))`,
+            ),
+            true,
+            `${label} applies`,
+          );
+          await selectNote();
+          await click(label, noteScope);
+          await saved();
+          assert.equal(
+            await js(
+              `Boolean(document.querySelector('[aria-label="笔记正文"] ${selector}'))`,
+            ),
+            false,
+            `${label} cancels`,
+          );
+        }
+        await selectNote();
+        await click('引用', noteScope);
+        await saved();
+        assert.equal(
+          await js(
+            `Boolean(document.querySelector('[aria-label="笔记正文"] blockquote'))`,
+          ),
+          true,
+          'quote style applies',
+        );
+        await selectNote();
+        await click('引用', noteScope);
+        await saved();
+        assert.equal(
+          await js(
+            `Boolean(document.querySelector('[aria-label="笔记正文"] blockquote'))`,
+          ),
+          false,
+          'quote style toggles off on second click',
+        );
+        contents.sendInputEvent({ type: 'mouseMove', x: 400, y: 300 });
+        await js(`document.activeElement?.blur()`);
+        await select('阶段四原文片段');
+        await shot('00-selection-palette');
+        await click('蓝色划线');
+        await wait(
+          `Boolean(document.querySelector('article [data-highlight-color="blue"]'))`,
+          'selected color applies in place',
+        );
+        await js(
+          `document.querySelector('article [data-highlight-color="blue"]').click()`,
+        );
+        await wait(
+          `Boolean(document.querySelector('[aria-label="划线批注"]'))`,
+          'highlight opens its annotation bubble',
+        );
+        await js(
+          `(() => {const editor=document.querySelector('[aria-label="笔记正文"]');editor.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));editor.focus();return new Promise(resolve=>requestAnimationFrame(resolve));})()`,
+        );
+        assert.equal(
+          await js(
+            `document.activeElement===document.querySelector('[aria-label="笔记正文"]')`,
+          ),
+          true,
+          'outside dismissal preserves focus in the clicked note editor',
+        );
+        await js(
+          `document.querySelector('article [data-highlight-color="blue"]').click()`,
+        );
+        await wait(
+          `Boolean(document.querySelector('[aria-label="划线批注"]'))`,
+        );
+        await js(
+          `window.dispatchEvent(new KeyboardEvent('keydown',{key:'t',bubbles:true}))`,
+        );
+        await wait(
+          `document.querySelector('[aria-label="目录"]').dataset.open==='true'`,
+        );
+        await js(
+          `[...document.querySelectorAll('#reader-toc button')].find(button=>button.textContent.includes('第二章 转场测试')).click()`,
+        );
+        await wait(
+          `document.querySelector('article')?.textContent.includes('用于验证跨章后清理旧批注气泡')`,
+        );
+        assert.equal(
+          await js(
+            `Boolean(document.querySelector('[aria-label="划线批注"]'))`,
+          ),
+          false,
+          'chapter navigation dismisses stale annotation bubble',
+        );
+        await js(
+          `window.dispatchEvent(new KeyboardEvent('keydown',{key:'t',bubbles:true}))`,
+        );
+        await wait(
+          `document.querySelector('[aria-label="目录"]').dataset.open==='true'`,
+        );
+        await js(`document.querySelector('#reader-toc button').click()`);
+        await wait(
+          `document.querySelector('article')?.textContent.includes('阶段四原文片段用于稳定回跳')`,
         );
         await select('阶段四原文片段');
         await click('插入选区到笔记');
@@ -126,10 +396,32 @@ app.on('web-contents-created', (_event, contents) => {
         await wait(
           `document.querySelectorAll('[aria-label="笔记正文"] [data-note-source]').length===1`,
         );
+        await click('专注模式');
+        await wait(
+          `document.querySelector('#reader-notes').hidden`,
+          'focus mode hides notes',
+        );
+        await select('合成段落0');
+        await click('插入选区到笔记');
+        await wait(
+          `!document.querySelector('#reader-notes').hidden && document.querySelectorAll('[aria-label="笔记正文"] [data-note-source]').length===2`,
+          'note insertion exits focus mode and reveals its result',
+        );
+        await click('撤销', noteScope);
+        await wait(
+          `document.querySelectorAll('[aria-label="笔记正文"] [data-note-source]').length===1`,
+        );
+        await js(`document.querySelector('#reader-notes-toggle').click()`);
+        await wait(`document.querySelector('#reader-notes').hidden`);
         await select('另一段原文');
         await js(
           `(() => {const transfer=new DataTransfer(); window.__notesDrag=transfer; document.querySelector('article').dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));})()`,
         );
+        await wait(
+          `Boolean(document.querySelector('[aria-label="拖到此处打开笔记"]'))`,
+          'dragging reveals right blank-area note target',
+        );
+        await shot('00-drag-note-target');
         await js(
           `(() => {const forged=new DataTransfer();forged.setData('application/x-reader-selection','external-forged-token');document.querySelector('[aria-label="笔记正文"]').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:forged}));})()`,
         );
@@ -140,11 +432,16 @@ app.on('web-contents-created', (_event, contents) => {
           1,
         );
         await js(
-          `(() => {const e=document.querySelector('[aria-label="笔记正文"]');const box=e.getBoundingClientRect();e.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:window.__notesDrag,clientX:box.x+30,clientY:box.bottom-30}));})()`,
+          `(() => {const e=document.querySelector('[aria-label="拖到此处打开笔记"]');const box=e.getBoundingClientRect();e.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:window.__notesDrag}));e.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:window.__notesDrag,clientX:box.x+30,clientY:box.y+30}));})()`,
         );
         await wait(
           `document.querySelectorAll('[aria-label="笔记正文"] [data-note-source]').length===2`,
           'real dragstart/drop adds scoped reference',
+        );
+        assert.equal(
+          await js(`document.querySelector('#reader-notes').hidden`),
+          false,
+          'dropping in right blank area opens note',
         );
         await saved();
         await click('A+');
@@ -165,7 +462,7 @@ app.on('web-contents-created', (_event, contents) => {
         await contents.insertText('汇入的批注想法，不覆盖用户文字。');
         await click('保存批注');
         await wait(
-          `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='此条批注汇入笔记' && !b.disabled)`,
+          `[...document.querySelectorAll('button')].some(b=>b.getAttribute('aria-label')==='此条批注汇入笔记' && !b.disabled)`,
         );
         await click('此条批注汇入笔记');
         await wait(
@@ -208,7 +505,7 @@ app.on('web-contents-created', (_event, contents) => {
           await contents.insertText(text);
           await click('保存批注');
           await wait(
-            `[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='此条批注汇入笔记' && !b.disabled)`,
+            `[...document.querySelectorAll('button')].some(b=>b.getAttribute('aria-label')==='此条批注汇入笔记' && !b.disabled)`,
           );
         }
         await click('全部批注汇入笔记');
@@ -251,7 +548,7 @@ app.on('web-contents-created', (_event, contents) => {
           ),
           true,
         );
-        await click('专注');
+        await click('专注模式');
         await wait(`document.querySelector('#reader-notes').hidden`);
         await js(
           `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
@@ -328,8 +625,11 @@ app.on('web-contents-created', (_event, contents) => {
         assert.ok(layout?.width);
         await shot('02-resized-notes');
         const win = BrowserWindow.fromWebContents(contents);
-        win.setSize(800, 760);
-        await wait(`innerWidth < 1100`);
+        win.setSize(650, 760);
+        await wait(
+          `innerWidth < 700 && document.querySelector('#reader-notes').getAttribute('role') === 'dialog' && document.querySelector('#reader-notes').hidden`,
+          'responsive drawer layout has committed before toggling',
+        );
         await js(`document.querySelector('#reader-notes-toggle').click()`);
         await wait(`!document.querySelector('#reader-notes').hidden`);
         await shot('03-narrow-drawer');
@@ -337,7 +637,7 @@ app.on('web-contents-created', (_event, contents) => {
         await js(
           `document.querySelector('[aria-label="关闭笔记抽屉"]').click()`,
         );
-        await click('← 书架');
+        await click('返回书架');
         await wait(
           `Boolean([...document.querySelectorAll('h2')].find(e=>e.textContent==='synthetic-notes-b'))`,
         );
@@ -353,7 +653,7 @@ app.on('web-contents-created', (_event, contents) => {
         await js(
           `document.querySelector('[aria-label="关闭笔记抽屉"]').click()`,
         );
-        await click('← 书架');
+        await click('返回书架');
         await wait(
           `Boolean([...document.querySelectorAll('h2')].find(e=>e.textContent==='synthetic-notes-a'))`,
         );
